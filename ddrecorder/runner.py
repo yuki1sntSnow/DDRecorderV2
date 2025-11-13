@@ -7,6 +7,7 @@ from typing import List
 
 from .config import AppConfig, RoomConfig
 from .live.bilibili import BiliLiveRoom
+from .logging import get_stage_logger
 from .paths import RecordingPaths
 from .processor import RecordingProcessor
 from .recorder import LiveRecorder
@@ -25,6 +26,11 @@ class RoomRunner(threading.Thread):
         self.state_since = dt.datetime.now()
         self.last_error: str | None = None
         self._stop_event = threading.Event()
+        self.detect_logger = get_stage_logger("detect")
+        self.record_logger = get_stage_logger("record")
+        self.merge_logger = get_stage_logger("merge")
+        self.split_logger = get_stage_logger("split")
+        self.upload_logger = get_stage_logger("upload")
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -41,10 +47,10 @@ class RoomRunner(threading.Thread):
         while not self._stop_event.is_set():
             try:
                 self.room.refresh()
-                logging.debug("Room %s refresh complete live=%s", self.room_config.room_id, self.room.is_live)
+                self.detect_logger.info("刷新房间 %s，live=%s", self.room_config.room_id, self.room.is_live)
             except Exception:
                 self.last_error = "刷新房间状态失败"
-                logging.error("刷新房间 %s 状态失败", self.room_config.room_id, exc_info=True)
+                self.detect_logger.error("刷新房间 %s 状态失败", self.room_config.room_id, exc_info=True)
                 self.sleep_with_stop(self.app_config.root.check_interval)
                 continue
 
@@ -57,51 +63,51 @@ class RoomRunner(threading.Thread):
             paths = RecordingPaths(self.app_config.root.data_path, self.room_config.room_id, session_start)
             recorder = LiveRecorder(self.room, paths, self.room_config.recorder, self.app_config.root)
             self.set_state(RunnerState.RECORDING)
-            logging.info("房间 %s 开始录制，输出目录 %s", self.room_config.room_id, recorder.paths.records_dir)
+            self.record_logger.info("房间 %s 开始录制，输出目录 %s", self.room_config.room_id, recorder.paths.records_dir)
             record_result = recorder.record()
             if not record_result:
                 self.set_state(RunnerState.ERROR)
-                logging.warning("房间 %s 录制失败，无有效片段", self.room_config.room_id)
+                self.record_logger.error("房间 %s 录制失败，无有效片段", self.room_config.room_id)
                 continue
 
             processor = RecordingProcessor(paths, self.room_config.recorder)
             self.set_state(RunnerState.PROCESSING)
-            logging.info("房间 %s 进入处理阶段", self.room_config.room_id)
+            self.merge_logger.info("房间 %s 进入处理阶段", self.room_config.room_id)
             process_result = processor.run()
             if not process_result:
                 self.set_state(RunnerState.ERROR)
-                logging.error("房间 %s 处理录制文件失败", self.room_config.room_id)
+                self.merge_logger.error("房间 %s 处理录制文件失败", self.room_config.room_id)
                 continue
 
             record_cfg = self.room_config.uploader.record
             if not record_cfg.upload_record:
                 self.set_state(RunnerState.IDLE)
-                logging.info("房间 %s 配置为不上传，处理完成后回到待命", self.room_config.room_id)
+                self.upload_logger.info("房间 %s 配置为不上传，处理完成后回到待命", self.room_config.room_id)
                 continue
 
             splits = processor.split(record_cfg.split_interval)
             if not splits:
                 self.set_state(RunnerState.ERROR)
-                logging.error("房间 %s 切分录播失败", self.room_config.room_id)
+                self.split_logger.error("房间 %s 切分录播失败", self.room_config.room_id)
                 continue
 
             try:
                 uploader = BiliUploader(self.app_config, self.room_config, self.room)
             except Exception:
-                logging.error("初始化上传器失败 room=%s", self.room_config.room_id, exc_info=True)
+                self.upload_logger.error("初始化上传器失败 room=%s", self.room_config.room_id, exc_info=True)
                 self.set_state(RunnerState.ERROR)
                 continue
             self.set_state(RunnerState.UPLOADING)
-            logging.info("房间 %s 开始上传，分段数量 %s", self.room_config.room_id, len(splits))
+            self.upload_logger.info("房间 %s 开始上传，分段数量 %s", self.room_config.room_id, len(splits))
             upload_success = False
             try:
                 upload_ret = uploader.upload_record(session_start, splits)
                 upload_success = upload_ret is not None
                 if upload_success and not record_cfg.keep_record_after_upload:
                     self._cleanup_splits(processor)
-                    logging.info("房间 %s 上传成功，已按配置清理分段", self.room_config.room_id)
+                    self.upload_logger.info("房间 %s 上传成功，已按配置清理分段", self.room_config.room_id)
             except Exception:
-                logging.error("上传失败 room=%s", self.room_config.room_id, exc_info=True)
+                self.upload_logger.error("上传失败 room=%s", self.room_config.room_id, exc_info=True)
                 upload_success = False
             finally:
                 uploader.close()

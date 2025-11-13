@@ -141,3 +141,25 @@ def test_paths_relative_to_project_root_when_config_in_config_dir(tmp_path):
     app_config = load_config(config_path)
     assert app_config.root.data_path == project_root.resolve()
     assert app_config.root.logger.path == (project_root / "log").resolve()
+
+
+def test_root_account_default_reuse(tmp_path):
+    config_content = {
+        "root": {
+            "account": {
+                "default": {
+                    "username": "u",
+                    "password": "p",
+                    "cookies": {"SESSDATA": "sess"}
+                }
+            }
+        },
+        "spec": [
+            {"room_id": "1", "uploader": {"account": "default"}}
+        ],
+    }
+    cfg_path = write_config(tmp_path, config_content)
+    app_config = load_config(cfg_path)
+    uploader_cfg = app_config.rooms[0].uploader
+    assert uploader_cfg.account.username == "u"
+    assert uploader_cfg.account.cookies["SESSDATA"] == "sess"

@@ -23,7 +23,7 @@ DDRecorderV2
 | ----------------- | ------------------------------------------------------------------------ |
 | `ddrecorder.cli`  | 统一入口，支持守护、手动上传、一次性清理、pytest、自检                   |
 | `RoomRunner`      | 检测开播、拉流、处理、上传、状态表输出，异常自动写日志                   |
-| `RecordingProcessor` | 调用 FFmpeg 拼 TS、生成合并文件、按 `split_interval` 切分               |
+| `RecordingProcessor` | 调用 FFmpeg 拼 TS、生成合并文件、按 `split_interval` 切分，失败自动重试 3 次  |
 | `BiliUploader`    | 调用 biliup 上传多 P，失败会在目录生成 `.upload_failed` 防止被清理        |
 | Cleanup Scheduler | 默认 24h 清理一次数据/日志，可通过 CLI 即时清理                         |
 | Auto Refresh      | 调 BiliAuth 获取 access_token / cookies 并写回配置                       |
@@ -63,25 +63,30 @@ pip install -r DDRecorderV2/requirements.txt
     "print_interval": 60,
     "data_path": "./",
     "logger": { "log_path": "./log", "log_level": "INFO" },
-    "uploader": { "lines": "AUTO" }
+    "uploader": { "lines": "AUTO" },
+    "account": {
+      "default": {
+        "username": "YOUR_USERNAME",
+        "password": "YOUR_PASSWORD",
+        "region": "86",
+        "access_token": "",
+        "refresh_token": "",
+        "cookies": {
+          "SESSDATA": "",
+          "bili_jct": "",
+          "DedeUserID": "",
+          "DedeUserID__ckMd5": "",
+          "sid": ""
+        }
+      }
+    }
   },
   "spec": [
     {
       "room_id": "12345",
       "recorder": { "keep_raw_record": false },
       "uploader": {
-        "account": {
-          "username": "YOUR_USERNAME",
-          "password": "YOUR_PASSWORD",
-          "region": "86",
-          "cookies": {
-            "SESSDATA": "",
-            "bili_jct": "",
-            "DedeUserID": "",
-            "DedeUserID__ckMd5": "",
-            "sid": ""
-          }
-        },
+        "account": "default",
         "record": {
           "upload_record": true,
           "keep_record_after_upload": false,
@@ -98,9 +103,12 @@ pip install -r DDRecorderV2/requirements.txt
 }
 ```
 
-- `keep_raw_record: false`：TS 合并后删除原始 flv
-- `keep_record_after_upload: false`：上传成功即删除 mp4 分段
-- 自动凭据：缺少 token/cookies 会调用 `BiliAuth.py` 模拟登录
+- `keep_raw_record`: 是否保留 flv 原片；`keep_record_after_upload`: 上传成功后是否保留 mp4。
+- 账号字段：
+  - `username` / `password` / `region`（可选）用于自动刷新 access_token / cookies；
+  - `access_token` / `refresh_token` 可填已有凭据，也可留空等待运行时刷新；
+  - `cookies` 必填，可通过 biliup-rs 或浏览器获取。
+- 如需复用账号，可在 `root.account.<name>` 定义，再在 `spec[].uploader.account` 写名称。
 
 ---
 

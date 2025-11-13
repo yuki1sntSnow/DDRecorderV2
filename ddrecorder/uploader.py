@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import logging
 from pathlib import Path
 from typing import Dict, List
 
@@ -10,6 +9,7 @@ from biliup.plugins.bili_webup import BiliBili, Data
 from .account_refresh import fetch_credentials, persist_account_credentials
 from .config import AppConfig, RoomConfig
 from .live.bilibili import BiliLiveRoom
+from .logging import get_stage_logger
 from .utils import session_tokens
 
 
@@ -19,6 +19,7 @@ class BiliUploader:
         self.room_config = room_config
         self.room = room
         self.client = BiliBili(Data())
+        self.logger = get_stage_logger("upload")
         self._login()
 
     def _login(self) -> None:
@@ -34,7 +35,7 @@ class BiliUploader:
                 self.client.login_by_cookies(cookie_payload)
                 return
             except Exception:
-                logging.warning("Cookie 登录失败，尝试重新获取凭据", exc_info=True)
+                self.logger.warning("Cookie 登录失败，尝试重新获取凭据", exc_info=True)
                 if not self._refresh_account_credentials():
                     break
                 attempts += 1
@@ -42,7 +43,7 @@ class BiliUploader:
 
     def _refresh_account_credentials(self) -> bool:
         account = self.room_config.uploader.account
-        logging.info("尝试刷新账号 %s 凭据", account.username or "unknown")
+        self.logger.info("尝试刷新账号 %s 凭据", account.username or "unknown")
         entry = {
             "username": account.username,
             "password": account.password,
@@ -53,7 +54,7 @@ class BiliUploader:
         }
         creds = fetch_credentials(entry)
         if not creds:
-            logging.error("刷新账号 %s 凭据失败", account.username or "unknown")
+            self.logger.error("刷新账号 %s 凭据失败", account.username or "unknown")
             return False
         account.access_token = creds.get("access_token", "")
         account.refresh_token = creds.get("refresh_token", "")
@@ -64,14 +65,14 @@ class BiliUploader:
             self.room_config.uploader.account_ref,
             account,
         )
-        logging.info("账号 %s 凭据已更新", account.username or "unknown")
+        self.logger.info("账号 %s 凭据已更新", account.username or "unknown")
         return True
 
     def close(self) -> None:
         try:
             self.client.close()
         except Exception:
-            logging.debug("关闭上传客户端失败", exc_info=True)
+            self.logger.debug("关闭上传客户端失败", exc_info=True)
 
     def upload_record(self, start: dt.datetime, splits: List[Path]) -> Dict | None:
         record_cfg = self.room_config.uploader.record
@@ -98,7 +99,7 @@ class BiliUploader:
             uploader.append(part)
             uploaded += 1
         if uploaded == 0:
-            logging.warning("没有可上传的分段")
+            self.logger.warning("没有可上传的分段")
             self.client.video = None
             return None
 
@@ -109,11 +110,11 @@ class BiliUploader:
             if cover_path.exists():
                 uploader.cover = self.client.cover_up(str(cover_path))
             else:
-                logging.warning("封面文件不存在: %s", cover_path)
+                self.logger.warning("封面文件不存在: %s", cover_path)
 
         resp = self.client.submit()
         if resp.get("code") == 0 and resp.get("data"):
-            logging.info("上传成功 bvid=%s", resp["data"]["bvid"])
+            self.logger.info("上传成功 bvid=%s", resp["data"]["bvid"])
             return {"avid": resp["data"]["aid"], "bvid": resp["data"]["bvid"]}
-        logging.error("上传失败: %s", resp)
+        self.logger.error("上传失败: %s", resp)
         return None

@@ -2,32 +2,54 @@
   "root": {
     "check_interval": 60,
     "print_interval": 60,
-    "data_path": "./",
+    "data_path": "./",              // 必填：数据目录
     "logger": {
       "log_path": "./log",
       "log_level": "INFO"
     },
     "request_header": {},
     "uploader": {
-      "lines": "AUTO"
+      "lines": "AUTO"               // 上传线路（AUTO/bda2/ws/qn...）
+    },
+    "account": {
+      "default": {
+        "username": "your_username",
+        "password": "your_password",
+        "region": "86",
+        "access_token": "",
+        "refresh_token": "",
+        "cookies": {
+          "SESSDATA": "your_sessdata",   // 必填
+          "bili_jct": "your_bili_jct",
+          "DedeUserID": "your_uid",
+          "DedeUserID__ckMd5": "your_ck_md5",
+          "sid": "your_sid"
+        }
+      }
     }
   },
   "spec": [
     {
-      "room_id": "123456",
+      "room_id": "123456",          // 必填：直播房间号
       "recorder": {
-        "keep_raw_record": false
+        "keep_raw_record": false     // 是否保存 flv 原片
       },
       "uploader": {
         "account": {
+          "username": "your_username",  // 可选：用于自动刷新凭据
+          "password": "your_password",  // 可选
+          "region": "86",
+          "access_token": "",          // 可选：已有 token 可填
+          "refresh_token": "",
           "cookies": {
-            "SESSDATA": "your_sessdata",
+            "SESSDATA": "your_sessdata",   // 必填
             "bili_jct": "your_bili_jct",
             "DedeUserID": "your_uid",
             "DedeUserID__ckMd5": "your_ck_md5",
             "sid": "your_sid"
           }
         },
+        "copyright": 2,
         "record": {
           "upload_record": true,
           "keep_record_after_upload": true,
@@ -36,7 +58,7 @@
           "tid": 27,
           "tags": ["直播录播"],
           "desc": "{room_name} {date}",
-          "cover": ""
+          "cover": ""                // 可选：封面路径
         }
       }
     }

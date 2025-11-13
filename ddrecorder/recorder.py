@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
@@ -9,6 +8,7 @@ from typing import List
 import requests
 
 from .config import RecorderConfig, RootConfig
+from .logging import get_stage_logger
 from .live.bilibili import BiliLiveRoom
 from .paths import RecordingPaths
 
@@ -32,23 +32,24 @@ class LiveRecorder:
         self.paths = paths
         self.recorder_cfg = recorder_cfg
         self.root_cfg = root_cfg
+        self.logger = get_stage_logger("record")
 
     def record(self) -> RecordingResult | None:
         self.paths.ensure_session_dirs()
         fragments: List[Path] = []
-        logging.info("开始录制房间 %s", self.room.room_id)
+        self.logger.info("开始录制房间 %s", self.room.room_id)
         while self.room.is_live:
             stream_urls = self.room.fetch_stream_urls()
             if not stream_urls:
-                logging.warning("未获取到直播流地址，稍后重试")
+                self.logger.warning("未获取到直播流地址，稍后重试")
                 break
             target_path = self.paths.fragment_path()
             if self._download(stream_urls[0], target_path):
                 fragments.append(target_path)
-                logging.info("完成片段 %s", target_path.name)
+                self.logger.info("完成片段 %s", target_path.name)
             self.room.refresh()
         if not fragments:
-            logging.warning("本次录制未生成有效片段")
+            self.logger.error("本次录制未生成有效片段")
             return None
         return RecordingResult(start=self.paths.start, record_dir=self.paths.records_dir, fragments=fragments)
 
@@ -65,7 +66,7 @@ class LiveRecorder:
                         fh.write(chunk)
             return True
         except requests.RequestException:
-            logging.error("录制时网络异常", exc_info=True)
+            self.logger.error("录制时网络异常", exc_info=True)
         except OSError:
-            logging.error("写入录播文件失败: %s", target_path, exc_info=True)
+            self.logger.error("写入录播文件失败: %s", target_path, exc_info=True)
         return False
