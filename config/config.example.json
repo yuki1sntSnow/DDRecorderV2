@@ -1,0 +1,44 @@
+{
+  "root": {
+    "check_interval": 60,
+    "print_interval": 60,
+    "data_path": "./",
+    "logger": {
+      "log_path": "./log",
+      "log_level": "INFO"
+    },
+    "request_header": {},
+    "uploader": {
+      "lines": "AUTO"
+    }
+  },
+  "spec": [
+    {
+      "room_id": "123456",
+      "recorder": {
+        "keep_raw_record": false
+      },
+      "uploader": {
+        "account": {
+          "cookies": {
+            "SESSDATA": "your_sessdata",
+            "bili_jct": "your_bili_jct",
+            "DedeUserID": "your_uid",
+            "DedeUserID__ckMd5": "your_ck_md5",
+            "sid": "your_sid"
+          }
+        },
+        "record": {
+          "upload_record": true,
+          "keep_record_after_upload": true,
+          "split_interval": 3600,
+          "title": "【{room_name}】{date} 录播",
+          "tid": 27,
+          "tags": ["直播录播"],
+          "desc": "{room_name} {date}",
+          "cover": ""
+        }
+      }
+    }
+  ]
+}

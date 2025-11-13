@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import datetime as dt
+import logging
+from pathlib import Path
+from typing import Dict, List
+
+from biliup.plugins.bili_webup import BiliBili, Data
+
+from .account_refresh import fetch_credentials, persist_account_credentials
+from .config import AppConfig, RoomConfig
+from .live.bilibili import BiliLiveRoom
+from .utils import session_tokens
+
+
+class BiliUploader:
+    def __init__(self, app_config: AppConfig, room_config: RoomConfig, room: BiliLiveRoom) -> None:
+        self.app_config = app_config
+        self.room_config = room_config
+        self.room = room
+        self.client = BiliBili(Data())
+        self._login()
+
+    def _login(self) -> None:
+        attempts = 0
+        while attempts < 2:
+            cookies = self.room_config.uploader.account.cookies
+            if not cookies and not self._refresh_account_credentials():
+                raise ValueError("缺少上传账号 cookies 配置")
+            cookie_payload = {
+                "cookie_info": {"cookies": [{"name": k, "value": v} for k, v in cookies.items()]}
+            }
+            try:
+                self.client.login_by_cookies(cookie_payload)
+                return
+            except Exception:
+                logging.warning("Cookie 登录失败，尝试重新获取凭据", exc_info=True)
+                if not self._refresh_account_credentials():
+                    break
+                attempts += 1
+        raise RuntimeError("登录 B 站上传接口失败")
+
+    def _refresh_account_credentials(self) -> bool:
+        account = self.room_config.uploader.account
+        logging.info("尝试刷新账号 %s 凭据", account.username or "unknown")
+        entry = {
+            "username": account.username,
+            "password": account.password,
+            "region": account.region,
+            "access_token": account.access_token,
+            "refresh_token": account.refresh_token,
+            "cookies": account.cookies,
+        }
+        creds = fetch_credentials(entry)
+        if not creds:
+            logging.error("刷新账号 %s 凭据失败", account.username or "unknown")
+            return False
+        account.access_token = creds.get("access_token", "")
+        account.refresh_token = creds.get("refresh_token", "")
+        account.cookies = creds.get("cookies", {}) or {}
+        persist_account_credentials(
+            self.app_config.config_path,
+            self.room_config.room_id,
+            self.room_config.uploader.account_ref,
+            account,
+        )
+        logging.info("账号 %s 凭据已更新", account.username or "unknown")
+        return True
+
+    def close(self) -> None:
+        try:
+            self.client.close()
+        except Exception:
+            logging.debug("关闭上传客户端失败", exc_info=True)
+
+    def upload_record(self, start: dt.datetime, splits: List[Path]) -> Dict | None:
+        record_cfg = self.room_config.uploader.record
+        if not record_cfg.upload_record:
+            return None
+        tokens = session_tokens(start, self.room.room_title or self.room.room_id)
+        uploader = Data()
+        uploader.copyright = self.room_config.uploader.copyright
+        uploader.title = record_cfg.title.format(**tokens)
+        uploader.desc = record_cfg.desc.format(**tokens)
+        uploader.source = f"https://live.bilibili.com/{self.room.room_id}"
+        uploader.tid = record_cfg.tid
+        uploader.set_tag(record_cfg.tags)
+
+        self.client.video = uploader
+
+        uploaded = 0
+        for split in sorted(splits):
+            if split.stat().st_size < 1_048_576:
+                continue
+            part = self.client.upload_file(str(split.resolve()), lines=self.app_config.root.uploader.lines)
+            part["title"] = split.stem.split("_")[-1]
+            part["desc"] = uploader.desc
+            uploader.append(part)
+            uploaded += 1
+        if uploaded == 0:
+            logging.warning("没有可上传的分段")
+            self.client.video = None
+            return None
+
+        if record_cfg.cover:
+            cover_path = Path(record_cfg.cover)
+            if not cover_path.is_absolute():
+                cover_path = (self.app_config.config_path.parent / cover_path).resolve()
+            if cover_path.exists():
+                uploader.cover = self.client.cover_up(str(cover_path))
+            else:
+                logging.warning("封面文件不存在: %s", cover_path)
+
+        resp = self.client.submit()
+        if resp.get("code") == 0 and resp.get("data"):
+            logging.info("上传成功 bvid=%s", resp["data"]["bvid"])
+            return {"avid": resp["data"]["aid"], "bvid": resp["data"]["bvid"]}
+        logging.error("上传失败: %s", resp)
+        return None
