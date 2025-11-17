@@ -32,7 +32,7 @@ class LiveRecorder:
         self.paths = paths
         self.recorder_cfg = recorder_cfg
         self.root_cfg = root_cfg
-        self.logger = get_stage_logger("record")
+        self.logger = get_stage_logger("record", self.paths.slug)
 
     def record(self) -> RecordingResult | None:
         self.paths.ensure_session_dirs()

@@ -4,7 +4,7 @@ from pathlib import Path
 import ffmpeg
 import pytest
 
-from ddrecorder.config import RecorderConfig
+from ddrecorder.config import RecorderConfig, DanmuAssConfig
 from ddrecorder.paths import RecordingPaths
 from ddrecorder.processor import RecordingProcessor
 
@@ -35,7 +35,9 @@ def test_processor_run_and_split(monkeypatch, recording_paths):
         ffmpeg, "probe", lambda *_args, **_kwargs: {"format": {"duration": 120}}
     )
 
-    processor = RecordingProcessor(recording_paths, RecorderConfig(keep_raw_record=False))
+    processor = RecordingProcessor(
+        recording_paths, RecorderConfig(keep_raw_record=False), DanmuAssConfig()
+    )
     result = processor.run()
 
     assert result is not None

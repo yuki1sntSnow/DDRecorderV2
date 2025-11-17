@@ -221,6 +221,6 @@ data/
 
 # Config backups / local overrides
 config/config.json
+config/test_config.json
 
 MAINTENANCE.md
-

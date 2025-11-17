@@ -76,6 +76,34 @@ def _account_from_raw(entry, base: Path) -> AccountConfig:
 
 
 @dataclass
+class DanmuAssConfig:
+    play_res_x: int = 1920
+    play_res_y: int = 1080
+    font: str = "Microsoft YaHei"
+    font_size: int = 45
+    duration: float = 6.0
+    row_count: int = 12
+    line_height: int = 40
+    margin_top: int = 60
+    scroll_end: int = -200
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "DanmuAssConfig":
+        data = data or {}
+        return cls(
+            play_res_x=int(data.get("play_res_x", 1920)),
+            play_res_y=int(data.get("play_res_y", 1080)),
+            font=data.get("font", "Microsoft YaHei"),
+            font_size=int(data.get("font_size", 45)),
+            duration=float(data.get("duration", 6.0)),
+            row_count=int(data.get("row_count", 12)),
+            line_height=int(data.get("line_height", 40)),
+            margin_top=int(data.get("margin_top", 60)),
+            scroll_end=int(data.get("scroll_end", -200)),
+        )
+
+
+@dataclass
 class RecordUploadConfig:
     upload_record: bool = False
     keep_record_after_upload: bool = True
@@ -105,12 +133,16 @@ class RecordUploadConfig:
 @dataclass
 class RecorderConfig:
     keep_raw_record: bool = True
+    enable_danmu: bool = False
 
     @classmethod
     def from_dict(cls, data: Dict) -> "RecorderConfig":
         if not data:
             data = {}
-        return cls(keep_raw_record=data.get("keep_raw_record", True))
+        return cls(
+            keep_raw_record=data.get("keep_raw_record", True),
+            enable_danmu=data.get("enable_danmu", False),
+        )
 
 
 @dataclass
@@ -164,6 +196,7 @@ class RootConfig:
     request_header: Dict[str, str]
     uploader: RootUploaderConfig
     accounts: Dict[str, AccountConfig]
+    danmu_ass: DanmuAssConfig
 
     @classmethod
     def from_dict(cls, data: Dict, base: Path) -> "RootConfig":
@@ -181,6 +214,7 @@ class RootConfig:
             request_header=data.get("request_header", {}) or {},
             uploader=RootUploaderConfig.from_dict(data.get("uploader", {})),
             accounts=accounts,
+            danmu_ass=DanmuAssConfig.from_dict(data.get("danmu_ass", {})),
         )
 
 
@@ -191,7 +225,7 @@ class AppConfig:
     config_path: Path
 
     def ensure_base_dirs(self) -> None:
-        for sub in ("records", "merged", "merge_confs", "outputs", "splits"):
+        for sub in ("records", "merged", "merge_confs", "outputs", "splits", "danmu"):
             path = self.root.data_path / "data" / sub
             path.mkdir(parents=True, exist_ok=True)
         self.root.logger.path.mkdir(parents=True, exist_ok=True)

@@ -7,6 +7,7 @@ import pytest
 from ddrecorder.config import (
     AccountConfig,
     AppConfig,
+    DanmuAssConfig,
     LoggerConfig,
     RecorderConfig,
     RecordUploadConfig,
@@ -44,9 +45,10 @@ class FakeRecorder:
 
 
 class FakeProcessor:
-    def __init__(self, paths, recorder_cfg):
+    def __init__(self, paths, recorder_cfg, danmu_ass):
         self.paths = paths
         self.recorder_cfg = recorder_cfg
+        self.danmu_ass = danmu_ass
 
     def run(self):
         self.paths.splits_dir.mkdir(parents=True, exist_ok=True)
@@ -70,6 +72,20 @@ class FakeUploader:
         self.closed = True
 
 
+class FakeDanmuRecorder:
+    def __init__(self, *args, **kwargs):
+        self.running = False
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def join(self, timeout=None):
+        self.running = False
+
+
 @pytest.fixture
 def app_and_room(tmp_path):
     root_cfg = RootConfig(
@@ -80,6 +96,7 @@ def app_and_room(tmp_path):
         request_header={},
         uploader=RootUploaderConfig(lines="AUTO"),
         accounts={},
+        danmu_ass=DanmuAssConfig(),
     )
     account_cfg = AccountConfig(cookies={"SESSDATA": "sess"})
     record_cfg = RecordUploadConfig(upload_record=True, keep_record_after_upload=True)
@@ -98,6 +115,7 @@ def test_room_runner_lifecycle(monkeypatch, app_and_room):
     monkeypatch.setattr(runner_module, "LiveRecorder", FakeRecorder)
     monkeypatch.setattr(runner_module, "RecordingProcessor", FakeProcessor)
     monkeypatch.setattr(runner_module, "BiliUploader", FakeUploader)
+    monkeypatch.setattr(runner_module, "DanmuRecorder", FakeDanmuRecorder)
     monkeypatch.setattr(runner_module.RoomRunner, "sleep_with_stop", lambda self, seconds: None)
     cleared = {}
     marked = {}
@@ -120,6 +138,7 @@ def test_room_runner_marks_failure(monkeypatch, app_and_room):
     monkeypatch.setattr(runner_module, "BiliLiveRoom", FakeRoom)
     monkeypatch.setattr(runner_module, "LiveRecorder", FakeRecorder)
     monkeypatch.setattr(runner_module, "RecordingProcessor", FakeProcessor)
+    monkeypatch.setattr(runner_module, "DanmuRecorder", FakeDanmuRecorder)
 
     class FailingUploader(FakeUploader):
         def upload_record(self, start, splits):
@@ -139,3 +158,14 @@ def test_room_runner_marks_failure(monkeypatch, app_and_room):
     runner.join(timeout=1)
 
     assert "path" in marked
+
+
+def test_build_danmu_headers_uses_account_cookie():
+    headers = runner_module.build_danmu_headers({}, AccountConfig(cookies={"SESSDATA": "sess"}))
+    assert "Cookie" in headers and "SESSDATA=sess" in headers["Cookie"]
+
+
+def test_build_danmu_headers_keeps_existing_cookie():
+    base = {"Cookie": "foo=bar"}
+    headers = runner_module.build_danmu_headers(base, AccountConfig(cookies={"SESSDATA": "sess"}))
+    assert headers["Cookie"] == "foo=bar"

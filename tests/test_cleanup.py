@@ -3,7 +3,7 @@ import time
 
 from ddrecorder.cleanup import cleanup_directories
 from ddrecorder.utils import UPLOAD_FAILED_MARK
-from ddrecorder.config import AppConfig, LoggerConfig, RootConfig, RootUploaderConfig
+from ddrecorder.config import AppConfig, DanmuAssConfig, LoggerConfig, RootConfig, RootUploaderConfig
 
 
 def make_app_config(tmp_path):
@@ -16,6 +16,7 @@ def make_app_config(tmp_path):
         request_header={},
         uploader=RootUploaderConfig(lines="AUTO"),
         accounts={},
+        danmu_ass=DanmuAssConfig(),
     )
     return AppConfig(root=root_cfg, rooms=[], config_path=tmp_path / "config.json")
 

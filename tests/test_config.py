@@ -163,3 +163,48 @@ def test_root_account_default_reuse(tmp_path):
     uploader_cfg = app_config.rooms[0].uploader
     assert uploader_cfg.account.username == "u"
     assert uploader_cfg.account.cookies["SESSDATA"] == "sess"
+
+
+def test_ensure_base_dirs_includes_danmu(tmp_path):
+    config_content = {
+        "root": {
+            "data_path": str(tmp_path),
+        },
+        "spec": [],
+    }
+    cfg_path = write_config(tmp_path, config_content)
+    app_config = load_config(cfg_path)
+    danmu_dir = tmp_path / "data" / "danmu"
+    assert danmu_dir.exists()
+
+
+def test_recorder_enable_danmu_flag(tmp_path):
+    config_content = {
+        "spec": [
+            {
+                "room_id": "1",
+                "recorder": {"keep_raw_record": False, "enable_danmu": True},
+            }
+        ]
+    }
+    cfg_path = write_config(tmp_path, config_content)
+    app_config = load_config(cfg_path)
+    assert app_config.rooms[0].recorder.enable_danmu is True
+
+
+def test_danmu_ass_config_override(tmp_path):
+    config_content = {
+        "root": {
+            "danmu_ass": {
+                "font": "SimHei",
+                "duration": 8,
+                "row_count": 5,
+            }
+        },
+        "spec": [],
+    }
+    cfg_path = write_config(tmp_path, config_content)
+    app_config = load_config(cfg_path)
+    assert app_config.root.danmu_ass.font == "SimHei"
+    assert app_config.root.danmu_ass.duration == 8
+    assert app_config.root.danmu_ass.row_count == 5

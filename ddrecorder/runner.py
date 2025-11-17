@@ -5,7 +5,8 @@ import logging
 import threading
 from typing import List
 
-from .config import AppConfig, RoomConfig
+from .config import AppConfig, RoomConfig, AccountConfig
+from .danmurecorder import DanmuRecorder
 from .live.bilibili import BiliLiveRoom
 from .logging import get_stage_logger
 from .paths import RecordingPaths
@@ -28,8 +29,7 @@ class RoomRunner(threading.Thread):
         self._stop_event = threading.Event()
         self.detect_logger = get_stage_logger("detect")
         self.record_logger = get_stage_logger("record")
-        self.merge_logger = get_stage_logger("merge")
-        self.split_logger = get_stage_logger("split")
+        self.process_logger = get_stage_logger("process")
         self.upload_logger = get_stage_logger("upload")
 
     def stop(self) -> None:
@@ -62,21 +62,49 @@ class RoomRunner(threading.Thread):
             session_start = dt.datetime.now()
             paths = RecordingPaths(self.app_config.root.data_path, self.room_config.room_id, session_start)
             recorder = LiveRecorder(self.room, paths, self.room_config.recorder, self.app_config.root)
+            danmu_recorder = None
+            if self.room_config.recorder.enable_danmu:
+                try:
+                    danmu_headers = build_danmu_headers(
+                        self.app_config.root.request_header, self.room_config.uploader.account
+                    )
+                    danmu_recorder = DanmuRecorder(
+                        room_id=self.room_config.room_id,
+                        slug=paths.slug,
+                        headers=danmu_headers,
+                        output_dir=paths.danmu_dir,
+                        logger=self.record_logger,
+                    )
+                    danmu_recorder.start()
+                except Exception:
+                    danmu_recorder = None
+                    self.record_logger.error(
+                        "弹幕录制器启动失败 room=%s", self.room_config.room_id, exc_info=True
+                    )
+            else:
+                danmu_recorder = None
             self.set_state(RunnerState.RECORDING)
-            self.record_logger.info("房间 %s 开始录制，输出目录 %s", self.room_config.room_id, recorder.paths.records_dir)
+            self.record_logger.info(
+                "房间 %s 开始录制，输出目录 %s", self.room_config.room_id, recorder.paths.records_dir
+            )
             record_result = recorder.record()
+            if danmu_recorder:
+                danmu_recorder.stop()
+                danmu_recorder.join(timeout=5)
             if not record_result:
                 self.set_state(RunnerState.ERROR)
                 self.record_logger.error("房间 %s 录制失败，无有效片段", self.room_config.room_id)
                 continue
 
-            processor = RecordingProcessor(paths, self.room_config.recorder)
+            processor = RecordingProcessor(
+                paths, self.room_config.recorder, self.app_config.root.danmu_ass
+            )
             self.set_state(RunnerState.PROCESSING)
-            self.merge_logger.info("房间 %s 进入处理阶段", self.room_config.room_id)
+            self.process_logger.info("房间 %s 进入处理阶段", self.room_config.room_id)
             process_result = processor.run()
             if not process_result:
                 self.set_state(RunnerState.ERROR)
-                self.merge_logger.error("房间 %s 处理录制文件失败", self.room_config.room_id)
+                self.process_logger.error("房间 %s 处理录制文件失败", self.room_config.room_id)
                 continue
 
             record_cfg = self.room_config.uploader.record
@@ -88,7 +116,7 @@ class RoomRunner(threading.Thread):
             splits = processor.split(record_cfg.split_interval)
             if not splits:
                 self.set_state(RunnerState.ERROR)
-                self.split_logger.error("房间 %s 切分录播失败", self.room_config.room_id)
+                self.process_logger.error("房间 %s 切分录播失败", self.room_config.room_id)
                 continue
 
             try:
@@ -127,6 +155,18 @@ class RoomRunner(threading.Thread):
             processor.paths.splits_dir.rmdir()
         except OSError:
             logging.debug("删除分段目录失败")
+
+
+def build_danmu_headers(
+    base_headers: dict[str, str] | None, account: AccountConfig | None
+) -> dict[str, str]:
+    headers: dict[str, str] = dict(base_headers or {})
+    cookie = headers.get("Cookie") or headers.get("cookie")
+    if not cookie and account and account.cookies:
+        cookie = "; ".join(f"{key}={value}" for key, value in account.cookies.items())
+        if cookie:
+            headers["Cookie"] = cookie
+    return headers
 
 
 class RunnerController:

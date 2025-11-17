@@ -19,7 +19,7 @@ class BiliUploader:
         self.room_config = room_config
         self.room = room
         self.client = BiliBili(Data())
-        self.logger = get_stage_logger("upload")
+        self.logger = get_stage_logger("upload", self.room_config.room_id)
         self._login()
 
     def _login(self) -> None:

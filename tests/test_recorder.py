@@ -1,7 +1,7 @@
 import datetime as dt
 import types
 
-from ddrecorder.config import LoggerConfig, RecorderConfig, RootConfig, RootUploaderConfig
+from ddrecorder.config import DanmuAssConfig, LoggerConfig, RecorderConfig, RootConfig, RootUploaderConfig
 from ddrecorder.paths import RecordingPaths
 from ddrecorder.recorder import LiveRecorder
 
@@ -36,6 +36,7 @@ def test_live_recorder_creates_fragments(tmp_path):
         request_header={},
         uploader=RootUploaderConfig(lines="AUTO"),
         accounts={},
+        danmu_ass=DanmuAssConfig(),
     )
     recorder_cfg = RecorderConfig(keep_raw_record=True)
     room = DummyRoom()

@@ -14,6 +14,9 @@ def test_recording_paths_creates_directories(tmp_path):
     assert paths.splits_dir.exists()
     assert paths.merge_conf_path.parent.exists()
     assert paths.merged_file.parent.exists()
+    assert paths.danmu_dir.exists()
+    assert paths.danmu_json_path.name == "danmu.jsonl"
+    assert paths.danmu_ass_path.name.endswith(".ass")
     assert paths.slug == "9876_2024-01-02_03-04-05"
 
 

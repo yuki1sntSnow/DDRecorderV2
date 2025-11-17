@@ -50,6 +50,46 @@ class FakeBiliBili:
 
 fake_bili_module.Data = FakeData
 fake_bili_module.BiliBili = FakeBiliBili
-sys.modules.setdefault("biliup", types.ModuleType("biliup"))
-sys.modules.setdefault("biliup.plugins", types.ModuleType("biliup.plugins"))
+
+fake_bili_root = sys.modules.setdefault("biliup", types.ModuleType("biliup"))
+if not hasattr(fake_bili_root, "__path__"):
+    fake_bili_root.__path__ = []
+fake_plugins_pkg = sys.modules.setdefault("biliup.plugins", types.ModuleType("biliup.plugins"))
+setattr(fake_bili_root, "plugins", fake_plugins_pkg)
 sys.modules["biliup.plugins.bili_webup"] = fake_bili_module
+class FakeWbi:
+    UPDATE_INTERVAL = 3600
+
+    def __init__(self):
+        self.key = "fake"
+        self.last_update = 0
+
+    def update_key(self, *_args):
+        self.key = "fake"
+        self.last_update = 0
+
+
+fake_plugins_pkg.wbi = FakeWbi()
+
+
+class FakeDanmakuBilibili:
+    heartbeat = b""
+    heartbeatInterval = 30
+    headers = {"User-Agent": "test"}
+
+    @staticmethod
+    async def get_ws_info(_url, _content):
+        return "wss://example.com/sub", [b"AUTH"]
+
+    @staticmethod
+    def decode_msg(_payload):
+        return []
+
+
+fake_danmaku_pkg = sys.modules.setdefault("biliup.Danmaku", types.ModuleType("biliup.Danmaku"))
+if not hasattr(fake_danmaku_pkg, "__path__"):
+    fake_danmaku_pkg.__path__ = []
+fake_danmaku_module = types.ModuleType("biliup.Danmaku.bilibili")
+fake_danmaku_module.Bilibili = FakeDanmakuBilibili
+setattr(fake_danmaku_pkg, "bilibili", fake_danmaku_module)
+sys.modules["biliup.Danmaku.bilibili"] = fake_danmaku_module

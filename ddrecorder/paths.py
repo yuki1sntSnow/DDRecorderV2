@@ -42,12 +42,25 @@ class RecordingPaths:
     def merged_file(self) -> Path:
         return self.merged_dir / f"{self.slug}_merged.mp4"
 
+    @property
+    def danmu_dir(self) -> Path:
+        return self.data_root / "data" / "danmu" / self.slug
+
+    @property
+    def danmu_json_path(self) -> Path:
+        return self.danmu_dir / "danmu.jsonl"
+
+    @property
+    def danmu_ass_path(self) -> Path:
+        return self.danmu_dir / f"{self.slug}.ass"
+
     def ensure_session_dirs(self) -> None:
         self.records_dir.mkdir(parents=True, exist_ok=True)
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self.splits_dir.mkdir(parents=True, exist_ok=True)
         self.merged_dir.mkdir(parents=True, exist_ok=True)
         self.merge_conf_path.parent.mkdir(parents=True, exist_ok=True)
+        self.danmu_dir.mkdir(parents=True, exist_ok=True)
 
     def fragment_path(self, timestamp: dt.datetime | None = None) -> Path:
         ts = timestamp or dt.datetime.now()

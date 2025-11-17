@@ -11,6 +11,15 @@
     "uploader": {
       "lines": "AUTO"               // 上传线路（AUTO/bda2/ws/qn...）
     },
+    "danmu_ass": {
+      "font": "Microsoft YaHei",
+      "font_size": 45,
+      "duration": 6,
+      "row_count": 12,
+      "line_height": 40,
+      "margin_top": 60,
+      "scroll_end": -200
+    },
     "account": {
       "default": {
         "username": "your_username",
@@ -32,7 +41,8 @@
     {
       "room_id": "123456",          // 必填：直播房间号
       "recorder": {
-        "keep_raw_record": false     // 是否保存 flv 原片
+        "keep_raw_record": false,    // 是否保存 flv 原片
+        "enable_danmu": false        // 是否录制弹幕
       },
       "uploader": {
         "account": {

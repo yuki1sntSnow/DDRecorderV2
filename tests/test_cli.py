@@ -6,6 +6,7 @@ from ddrecorder import cli
 from ddrecorder.config import (
     AccountConfig,
     AppConfig,
+    DanmuAssConfig,
     LoggerConfig,
     RecorderConfig,
     RecordUploadConfig,
@@ -26,6 +27,7 @@ def build_app_config(tmp_path: Path) -> tuple[AppConfig, RoomConfig]:
         request_header={},
         uploader=RootUploaderConfig(lines="AUTO"),
         accounts={},
+        danmu_ass=DanmuAssConfig(),
     )
     room_cfg = RoomConfig(
         room_id="123",
