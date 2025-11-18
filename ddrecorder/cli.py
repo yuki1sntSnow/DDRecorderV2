@@ -56,6 +56,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--room-id",
         help="配合 --upload-path 指定房间号；如果缺省则尝试从目录名推断",
     )
+    parser.add_argument(
+        "--dump-credentials",
+        action="store_true",
+        help="登录并输出账号 Token/Cookies 到 config 目录下的 cookies.json 后退出（使用 root.account）",
+    )
+    parser.add_argument(
+        "--account",
+        help="配合 --dump-credentials 指定 root.account 下的名称，缺省取第一个",
+    )
     return parser.parse_args(argv)
 
 
@@ -106,6 +115,9 @@ def main() -> None:
     if args.run_tests:
         run_tests()
         return
+    if args.dump_credentials:
+        dump_and_exit(cfg_path, args.account)
+        return
     if args.upload_path:
         manual_upload_from_cli(cfg_path, Path(args.upload_path), room_id=args.room_id)
         return
@@ -121,6 +133,14 @@ def run_tests() -> None:
 
     cmd = [sys.executable, "-m", "pytest"]
     subprocess.run(cmd, check=True)
+
+
+def dump_and_exit(config_path: Path, account: str | None) -> None:
+    from .account_refresh import dump_credentials
+
+    out_path = dump_credentials(config_path, account_name=account)
+    logging.info("账户凭据已输出到 %s", out_path)
+    print(f"[INFO] 凭据已保存到 {out_path}")
 
 
 def manual_upload_from_cli(config_path: Path, media_path: Path, room_id: str | None = None) -> None:

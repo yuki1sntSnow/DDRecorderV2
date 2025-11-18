@@ -65,8 +65,11 @@ class LiveRecorder:
                             continue
                         fh.write(chunk)
             return True
+        except requests.HTTPError as exc:
+            # 常见为 403 CDN 拒绝，高码率或签名过期，可忽略单次重试
+            self.logger.warning("拉流返回 HTTP %s，url=%s", exc.response.status_code if exc.response else "?", url)
         except requests.RequestException:
-            self.logger.error("录制时网络异常", exc_info=True)
+            self.logger.warning("录制时网络异常，稍后重试", exc_info=True)
         except OSError:
             self.logger.error("写入录播文件失败: %s", target_path, exc_info=True)
         return False

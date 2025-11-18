@@ -15,13 +15,12 @@ def test_stage_logs_and_ffmpeg_path(tmp_path):
     detect_logger.error("error message")
 
     stage_dir = tmp_path / "log" / "detect"
-    info_file = stage_dir / "info.log"
-    error_file = stage_dir / "error.log"
+    stage_file = stage_dir / "detect.log"
 
-    assert info_file.exists()
-    assert error_file.exists()
-    assert "info message" in info_file.read_text(encoding="utf-8")
-    assert "error message" in error_file.read_text(encoding="utf-8")
+    assert stage_file.exists()
+    text = stage_file.read_text(encoding="utf-8")
+    assert "info message" in text
+    assert "error message" in text
 
     ffmpeg_log = logging_module.get_ffmpeg_log_path("room1")
     assert ffmpeg_log.exists()

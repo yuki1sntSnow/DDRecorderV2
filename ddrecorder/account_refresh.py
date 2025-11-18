@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .config import AccountConfig
 
 REQUIRED_COOKIES = {"SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5", "sid"}
+DEFAULT_COOKIES_FILE = "cookies.json"
 
 
 def ensure_account_credentials(
@@ -71,6 +72,49 @@ def _refresh_entry(entry: dict, fetcher: Callable[[dict], Optional[dict]]) -> bo
 def fetch_credentials(entry: dict, fetcher: Optional[Callable[[dict], Optional[dict]]] = None) -> Optional[dict]:
     fetcher = fetcher or _default_fetcher
     return fetcher(entry)
+
+
+def dump_credentials(
+    config_path: Path,
+    account_name: Optional[str] = None,
+    fetcher: Optional[Callable[[dict], Optional[dict]]] = None,
+) -> Path:
+    """
+    Login via BiliAuth (or provided fetcher) and persist tokens/cookies to a JSON file.
+    If account_name is provided, only dump that root account; otherwise dump the first root account.
+    """
+    output: Dict[str, dict] = {}
+    with open(config_path, encoding="utf-8") as f:
+        raw = json.load(f)
+
+    root_accounts: Dict[str, dict] = (raw.get("root", {}).get("account", {}) or {})
+    targets: Dict[str, dict] = {}
+    if account_name:
+        if account_name not in root_accounts:
+            raise ValueError(f"account '{account_name}' not found in root.account")
+        targets[account_name] = root_accounts[account_name]
+    else:
+        if not root_accounts:
+            raise ValueError("no root.account entries to dump")
+        first_name = next(iter(root_accounts))
+        targets[first_name] = root_accounts[first_name]
+
+    for name, entry in targets.items():
+        creds = fetch_credentials(entry, fetcher=fetcher)
+        if not creds:
+            logging.error("获取账号 %s 凭据失败", name)
+            continue
+        output[name] = {
+            "username": entry.get("username", ""),
+            "region": entry.get("region", "86"),
+            "access_token": creds.get("access_token", ""),
+            "refresh_token": creds.get("refresh_token", ""),
+            "cookies": creds.get("cookies", {}),
+        }
+
+    out_path = config_path.parent / DEFAULT_COOKIES_FILE
+    out_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out_path
 
 
 def _default_fetcher(entry: dict) -> Optional[dict]:

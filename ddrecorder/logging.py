@@ -77,7 +77,7 @@ def get_stage_logger(stage: str, _: str | None = None) -> logging.Logger:
         return _stage_loggers[stage]
 
     logger = logging.getLogger(f"ddrecorder.{stage}")
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     logger.handlers = []
     logger.propagate = False
 
@@ -85,25 +85,17 @@ def get_stage_logger(stage: str, _: str | None = None) -> logging.Logger:
     stage_dir = base_path / stage
     stage_dir.mkdir(parents=True, exist_ok=True)
 
-    info_path = stage_dir / "info.log"
-    error_path = stage_dir / "error.log"
+    stage_path = stage_dir / f"{stage}.log"
     formatter = logging.Formatter(
         fmt="%(asctime)s %(threadName)s %(filename)s:%(lineno)d %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    info_handler = logging.FileHandler(info_path, encoding="utf-8", delay=True)
-    info_handler.setLevel(logging.DEBUG)
-    info_handler.addFilter(MaxLevelFilter(logging.INFO))
-    info_handler.setFormatter(formatter)
+    handler = logging.FileHandler(stage_path, encoding="utf-8", delay=True)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(formatter)
 
-    error_handler = logging.FileHandler(error_path, encoding="utf-8", delay=True)
-    error_handler.setLevel(logging.WARNING)
-    error_handler.addFilter(MinLevelFilter(logging.WARNING))
-    error_handler.setFormatter(formatter)
-
-    logger.addHandler(info_handler)
-    logger.addHandler(error_handler)
+    logger.addHandler(handler)
     _stage_loggers[stage] = logger
     return logger
 

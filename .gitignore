@@ -223,4 +223,7 @@ data/
 config/config.json
 config/test_config.json
 
+# Generated credentials
+config/cookies.json
+
 MAINTENANCE.md

@@ -47,10 +47,10 @@ class RoomRunner(threading.Thread):
         while not self._stop_event.is_set():
             try:
                 self.room.refresh()
-                self.detect_logger.info("刷新房间 %s，live=%s", self.room_config.room_id, self.room.is_live)
+                self.detect_logger.debug("刷新房间 %s，live=%s", self.room_config.room_id, self.room.is_live)
             except Exception:
                 self.last_error = "刷新房间状态失败"
-                self.detect_logger.error("刷新房间 %s 状态失败", self.room_config.room_id, exc_info=True)
+                self.detect_logger.warning("刷新房间 %s 状态失败", self.room_config.room_id, exc_info=True)
                 self.sleep_with_stop(self.app_config.root.check_interval)
                 continue
 

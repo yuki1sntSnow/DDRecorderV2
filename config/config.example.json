@@ -1,34 +1,34 @@
 {
   "root": {
-    "check_interval": 60,
-    "print_interval": 60,
-    "data_path": "./",              // 必填：数据目录
+    "check_interval": 60,           // 轮询房间状态间隔（秒）
+    "print_interval": 60,           // 控制台状态输出间隔（秒）
+    "data_path": "./",              // 基础数据目录
     "logger": {
-      "log_path": "./log",
-      "log_level": "INFO"
+      "log_path": "./log",          // 日志目录
+      "log_level": "INFO"           // DEBUG/INFO/WARNING/ERROR
     },
-    "request_header": {},
+    "request_header": {},           // 可自定义请求头（如 Cookie）
     "uploader": {
-      "lines": "AUTO"               // 上传线路（AUTO/bda2/ws/qn...）
+      "lines": "AUTO"               // 上传线路（AUTO/bda2/ws/…）
     },
     "danmu_ass": {
-      "font": "Microsoft YaHei",
-      "font_size": 45,
-      "duration": 6,
-      "row_count": 12,
-      "line_height": 40,
-      "margin_top": 60,
-      "scroll_end": -200
+      "font": "Microsoft YaHei",    // 字体
+      "font_size": 45,              // 字号
+      "duration": 6,                // 弹幕停留秒数
+      "row_count": 12,              // 行数
+      "line_height": 40,            // 行高
+      "margin_top": 60,             // 顶部留白
+      "scroll_end": -200            // 滚动终点偏移
     },
-    "account": {
+    "account": {                    // 多账号可在此定义，录制/上传引用名称
       "default": {
-        "username": "your_username",
+        "username": "your_username",    // 可选：用于 BiliAuth 自动登录
         "password": "your_password",
         "region": "86",
-        "access_token": "",
+        "access_token": "",             // 可选：已有 token
         "refresh_token": "",
         "cookies": {
-          "SESSDATA": "your_sessdata",   // 必填
+          "SESSDATA": "your_sessdata",  // 必填：浏览器导出
           "bili_jct": "your_bili_jct",
           "DedeUserID": "your_uid",
           "DedeUserID__ckMd5": "your_ck_md5",
@@ -39,36 +39,23 @@
   },
   "spec": [
     {
-      "room_id": "123456",          // 必填：直播房间号
+      "room_id": "123456",               // 必填：直播房间号
       "recorder": {
-        "keep_raw_record": false,    // 是否保存 flv 原片
-        "enable_danmu": false        // 是否录制弹幕
+        "keep_raw_record": false,        // 是否保存 flv 原片
+        "enable_danmu": true            // 是否录制弹幕并生成 ASS
       },
       "uploader": {
-        "account": {
-          "username": "your_username",  // 可选：用于自动刷新凭据
-          "password": "your_password",  // 可选
-          "region": "86",
-          "access_token": "",          // 可选：已有 token 可填
-          "refresh_token": "",
-          "cookies": {
-            "SESSDATA": "your_sessdata",   // 必填
-            "bili_jct": "your_bili_jct",
-            "DedeUserID": "your_uid",
-            "DedeUserID__ckMd5": "your_ck_md5",
-            "sid": "your_sid"
-          }
-        },
-        "copyright": 2,
+        "account": "default",            // 指向 root.account 下的名称
+        "copyright": 2,                 // 稿件类型
         "record": {
-          "upload_record": true,
-          "keep_record_after_upload": true,
-          "split_interval": 3600,
+          "upload_record": true,         // 是否上传
+          "keep_record_after_upload": true, // 上传后是否保留 mp4
+          "split_interval": 3600,        // 分段秒数（0 表示不分段）
           "title": "【{room_name}】{date} 录播",
-          "tid": 27,
-          "tags": ["直播录播"],
-          "desc": "{room_name} {date}",
-          "cover": ""                // 可选：封面路径
+          "tid": 27,                     // 分区 tid
+          "tags": ["直播录播"],           // 标签列表
+          "desc": "{room_name} {date}",  // 简介
+          "cover": ""                    // 可选：封面路径（相对 config）
         }
       }
     }

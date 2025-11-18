@@ -173,9 +173,18 @@ class RecordingProcessor:
                 self.process_logger.debug("删除 TS 片段失败: %s", ts_file, exc_info=True)
 
     def _run_cmd(self, cmd: List[str]) -> bool:
+        """
+        Run FFmpeg command with compact logging by default.
+        Set env DDRECORDER_FFMPEG_VERBOSE=1 to enable detailed debug output.
+        """
+        verbose = os.environ.get("DDRECORDER_FFMPEG_VERBOSE") == "1"
         patched_cmd = cmd
         if "-loglevel" not in cmd:
-            patched_cmd = [cmd[0], "-loglevel", "level+debug", "-stats"] + cmd[1:]
+            loglevel = "level+debug" if verbose else "error"
+            patched_cmd = [cmd[0], "-hide_banner", "-nostdin", "-loglevel", loglevel]
+            if verbose:
+                patched_cmd += ["-stats", "-stats_period", "1"]
+            patched_cmd += cmd[1:]
         try:
             subprocess.run(
                 patched_cmd,
@@ -185,7 +194,7 @@ class RecordingProcessor:
             )
             self.ffmpeg_logfile_hander.flush()
             return True
-        except subprocess.CalledProcessError as exc:
+        except subprocess.CalledProcessError:
             self.ffmpeg_logfile_hander.flush()
             self.process_logger.error(
                 "FFmpeg 命令失败: %s，详见 %s", " ".join(patched_cmd), self.ffmpeg_logfile_hander.name

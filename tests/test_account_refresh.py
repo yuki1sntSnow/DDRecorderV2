@@ -3,6 +3,7 @@ from pathlib import Path
 
 from ddrecorder.account_refresh import ensure_account_credentials, persist_account_credentials
 from ddrecorder.config import AccountConfig
+from ddrecorder.account_refresh import dump_credentials
 
 
 def write_config(tmp_path: Path, data: dict) -> Path:
@@ -128,3 +129,28 @@ def test_persist_account_updates_root_entry(tmp_path):
     entry = stored["root"]["account"]["main"]
     assert entry["access_token"] == "new_access"
     assert entry["cookies"]["SESSDATA"] == "sess"
+
+
+def test_dump_credentials(tmp_path):
+    raw = {
+        "root": {
+            "account": {
+                "main": {
+                    "username": "u",
+                    "password": "p",
+                    "region": "86",
+                }
+            }
+        },
+        "spec": [],
+    }
+    config_path = write_config(tmp_path, raw)
+
+    def fake_fetch(entry):
+        return complete_creds()
+
+    out = dump_credentials(config_path, account_name="main", fetcher=fake_fetch)
+    assert out.exists()
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["main"]["access_token"] == "a"
+    assert data["main"]["cookies"]["SESSDATA"] == "sess"
