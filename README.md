@@ -26,6 +26,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m ddrecorder                      # 使用 config/config.json 守护运行
 python -m ddrecorder --clean              # 只执行一次清理
+python -m ddrecorder --split-path data/merged/<room>_<time>_merged.mp4 [--split-interval 3600] [--room-id <room>]
 python -m ddrecorder --upload-path data/splits/<room>_<time> [--room-id <room>]
 ```
 

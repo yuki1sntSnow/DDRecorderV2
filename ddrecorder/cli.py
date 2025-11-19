@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import signal
 import sys
 import time
@@ -10,12 +11,16 @@ from pathlib import Path
 from .cleanup import CleanupScheduler, perform_cleanup
 from .config import AppConfig, RoomConfig, load_config
 from .logging import configure_logging
+from .paths import RecordingPaths
+from .processor import RecordingProcessor
 from .runner import RunnerController
 from .uploader import BiliUploader
 from .live.bilibili import BiliLiveRoom
 from .utils import clear_upload_failed, mark_upload_failed
 
 import datetime as dt
+
+_SLUG_TS_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -53,8 +58,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="手动上传指定目录下的 mp4 分段（路径为 splits 目录）",
     )
     parser.add_argument(
+        "--split-path",
+        help="手动切分已合并的 mp4 文件（路径为 *_merged.mp4 或包含该文件的目录）",
+    )
+    parser.add_argument(
+        "--split-interval",
+        type=int,
+        help="配合 --split-path 指定分段长度（秒），缺省读取配置文件",
+    )
+    parser.add_argument(
         "--room-id",
-        help="配合 --upload-path 指定房间号；如果缺省则尝试从目录名推断",
+        help="配合 --upload-path/--split-path 指定房间号；缺省尝试从路径推断",
     )
     parser.add_argument(
         "--dump-credentials",
@@ -118,6 +132,11 @@ def main() -> None:
     if args.dump_credentials:
         dump_and_exit(cfg_path, args.account)
         return
+    if args.split_path:
+        manual_split_from_cli(
+            cfg_path, Path(args.split_path), room_id=args.room_id, split_interval=args.split_interval
+        )
+        return
     if args.upload_path:
         manual_upload_from_cli(cfg_path, Path(args.upload_path), room_id=args.room_id)
         return
@@ -141,6 +160,37 @@ def dump_and_exit(config_path: Path, account: str | None) -> None:
     out_path = dump_credentials(config_path, account_name=account)
     logging.info("账户凭据已输出到 %s", out_path)
     print(f"[INFO] 凭据已保存到 {out_path}")
+
+
+def manual_split_from_cli(
+    config_path: Path, target_path: Path, room_id: str | None = None, split_interval: int | None = None
+) -> None:
+    logging.info("Manual split start: config=%s target=%s", config_path, target_path)
+    if not target_path.exists():
+        raise SystemExit(f"指定的合并文件或目录不存在: {target_path}")
+    merged_file = _locate_merged_file(target_path)
+    slug = _strip_merged_suffix(merged_file.stem)
+    inferred_room_id = room_id or _infer_room_id_from_slug(slug)
+
+    app_config = load_config(config_path)
+    configure_logging(app_config.root.logger)
+
+    if not inferred_room_id:
+        raise SystemExit("无法从路径推断房间号，请使用 --room-id 指定")
+    room_config = _get_room_config(app_config, inferred_room_id)
+    start_time = _infer_start_time_from_slug(slug, merged_file)
+    interval = split_interval or room_config.uploader.record.split_interval
+
+    paths = RecordingPaths(app_config.root.data_path, room_config.room_id, start_time)
+    processor = RecordingProcessor(paths, room_config.recorder, app_config.root.danmu_ass)
+    try:
+        splits = processor.split(interval, merged_override=merged_file, splits_dir=paths.splits_dir)
+    finally:
+        processor.close()
+    if not splits:
+        raise SystemExit("手动切分失败，未生成任何分段")
+    logging.info("手动切分完成，输出目录 %s，分段数量 %s", paths.splits_dir, len(splits))
+    print(f"[INFO] 已生成 {len(splits)} 个分段 -> {paths.splits_dir}")
 
 
 def manual_upload_from_cli(config_path: Path, media_path: Path, room_id: str | None = None) -> None:
@@ -189,6 +239,43 @@ def _infer_start_time(directory: Path, splits: list[Path]) -> dt.datetime:
         earliest = min(p.stat().st_mtime for p in splits)
         return dt.datetime.fromtimestamp(earliest)
     return dt.datetime.now()
+
+
+def _get_room_config(app_config: AppConfig, room_id: str) -> RoomConfig:
+    for room in app_config.rooms:
+        if str(room.room_id) == str(room_id):
+            return room
+    raise SystemExit(f"配置中未找到房间号 {room_id}")
+
+
+def _locate_merged_file(target_path: Path) -> Path:
+    if target_path.is_file():
+        return target_path
+    candidates = sorted(p for p in target_path.glob("*_merged.mp4") if p.is_file())
+    if not candidates:
+        raise SystemExit(f"目录 {target_path} 中未找到 *_merged.mp4 文件")
+    return candidates[-1]
+
+
+def _strip_merged_suffix(stem: str) -> str:
+    if stem.endswith("_merged"):
+        return stem[: -len("_merged")]
+    return stem
+
+
+def _infer_start_time_from_slug(slug: str, fallback_file: Path) -> dt.datetime:
+    match = _SLUG_TS_PATTERN.search(slug)
+    if match:
+        try:
+            return dt.datetime.strptime(match.group(0), "%Y-%m-%d_%H-%M-%S")
+        except ValueError:
+            pass
+    return dt.datetime.fromtimestamp(fallback_file.stat().st_mtime)
+
+
+def _infer_room_id_from_slug(slug: str) -> str | None:
+    prefix = slug.split("_")[0]
+    return prefix if prefix.isdigit() else None
 
 
 def _manual_upload(app_config: AppConfig, room_config: RoomConfig, media_path: Path) -> bool:

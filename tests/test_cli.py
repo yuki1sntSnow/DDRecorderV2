@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 
 from pathlib import Path
 
@@ -91,3 +92,55 @@ def test_manual_upload_invokes_uploader(monkeypatch, tmp_path):
     assert isinstance(uploads.get("start"), dt.datetime)
     assert "path" in cleared
     assert "path" not in marked
+
+
+def test_manual_split_invokes_processor(monkeypatch, tmp_path):
+    config = {
+        "root": {
+            "check_interval": 1,
+            "print_interval": 1,
+            "data_path": str(tmp_path),
+            "logger": {"log_path": str(tmp_path / "log"), "log_level": "INFO"},
+            "request_header": {},
+            "uploader": {"lines": "AUTO"},
+            "account": {},
+        },
+        "spec": [
+            {
+                "room_id": "123",
+                "recorder": {},
+                "uploader": {"record": {"upload_record": True, "split_interval": 777}},
+            }
+        ],
+    }
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps(config), encoding="utf-8")
+    slug = "123_2024-01-01_00-00-00"
+    merged_dir = tmp_path / "data" / "merged"
+    merged_dir.mkdir(parents=True)
+    merged_file = merged_dir / f"{slug}_merged.mp4"
+    merged_file.write_bytes(b"00")
+
+    calls = {}
+
+    class DummyProcessor:
+        def __init__(self, paths, recorder_cfg, danmu_cfg):
+            calls["paths"] = paths
+
+        def split(self, interval, merged_override=None, splits_dir=None):
+            calls["interval"] = interval
+            calls["merged_override"] = merged_override
+            calls["splits_dir"] = splits_dir
+            return [splits_dir / "part_0000.mp4"]
+
+        def close(self):
+            calls["closed"] = True
+
+    monkeypatch.setattr(cli, "RecordingProcessor", DummyProcessor)
+
+    cli.manual_split_from_cli(cfg_path, merged_file)
+
+    assert calls["interval"] == 777
+    assert calls["merged_override"] == merged_file
+    assert calls["splits_dir"] == tmp_path / "data" / "splits" / slug
+    assert calls["closed"] is True

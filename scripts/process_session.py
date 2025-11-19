@@ -53,11 +53,14 @@ def main() -> None:
     paths = RecordingPaths(app_config.root.data_path, args.room, start_dt)
 
     processor = RecordingProcessor(paths, room_cfg.recorder, app_config.root.danmu_ass)
-    result = processor.run()
-    if not result:
-        print("[WARN] 合并失败")
-        return
-    splits = processor.split(room_cfg.uploader.record.split_interval)
+    try:
+        result = processor.run()
+        if not result:
+            print("[WARN] 合并失败")
+            return
+        splits = processor.split(room_cfg.uploader.record.split_interval)
+    finally:
+        processor.close()
     print(f"[INFO] 合并已完成: {result.merged_file}")
     print(f"[INFO] 分段数量: {len(splits)} -> {paths.splits_dir}")
 

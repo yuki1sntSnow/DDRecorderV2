@@ -34,48 +34,52 @@ class RecordingProcessor:
         slug = self.paths.slug
         self.process_logger = get_stage_logger("process", slug)
         self.ffmpeg_logfile_hander = open(get_ffmpeg_log_path(slug), mode="a", encoding="utf-8")
+        self._ffmpeg_log_closed = False
 
     def run(self) -> ProcessResult | None:
         self.process_logger.info("开始处理录制片段，目录 %s", self.paths.records_dir)
-        try:
-            for attempt in range(1, 4):
-                ts_files = self._transmux_fragments()
-                if not ts_files:
-                    self.process_logger.error("第 %s 次处理失败：没有可用的录制片段", attempt)
-                    continue
-                if not self._concat(ts_files):
-                    self.process_logger.error("第 %s 次 FFmpeg concat 失败", attempt)
-                    continue
-                self._cleanup_ts(ts_files)
-                self._apply_subtitles()
-                if not self.recorder_cfg.keep_raw_record:
-                    self._cleanup_fragments()
-                return ProcessResult(merged_file=self.paths.merged_file, splits_dir=self.paths.splits_dir)
-            self.process_logger.error("多次重试后仍无法完成处理，将跳过本次任务")
-            return None
-        finally:
-            try:
-                self.ffmpeg_logfile_hander.close()
-            except Exception:
-                self.process_logger.debug("关闭 FFmpeg 日志失败", exc_info=True)
+        for attempt in range(1, 4):
+            ts_files = self._transmux_fragments()
+            if not ts_files:
+                self.process_logger.error("第 %s 次处理失败：没有可用的录制片段", attempt)
+                continue
+            if not self._concat(ts_files):
+                self.process_logger.error("第 %s 次 FFmpeg concat 失败", attempt)
+                continue
+            self._cleanup_ts(ts_files)
+            self._apply_subtitles()
+            if not self.recorder_cfg.keep_raw_record:
+                self._cleanup_fragments()
+            return ProcessResult(merged_file=self.paths.merged_file, splits_dir=self.paths.splits_dir)
+        self.process_logger.error("多次重试后仍无法完成处理，将跳过本次任务")
+        return None
 
-    def split(self, split_interval: int) -> List[Path]:
-        self.process_logger.info("开始切分合并后的视频，间隔 %ss", split_interval)
-        self.paths.splits_dir.mkdir(parents=True, exist_ok=True)
+    def split(
+        self,
+        split_interval: int,
+        merged_override: Path | None = None,
+        splits_dir: Path | None = None,
+    ) -> List[Path]:
+        merged_file = merged_override or self.paths.merged_file
+        target_splits_dir = splits_dir or self.paths.splits_dir
+        self.process_logger.info(
+            "开始切分合并后的视频，间隔 %ss，源文件 %s", split_interval, merged_file
+        )
+        target_splits_dir.mkdir(parents=True, exist_ok=True)
         if split_interval <= 0:
-            target = self.paths.splits_dir / f"{self.paths.slug}_0000.mp4"
-            shutil.copy2(self.paths.merged_file, target)
+            target = target_splits_dir / f"{self.paths.slug}_0000.mp4"
+            shutil.copy2(merged_file, target)
             return [target]
 
         try:
-            duration = float(ffmpeg.probe(str(self.paths.merged_file))["format"]["duration"])
+            duration = float(ffmpeg.probe(str(merged_file))["format"]["duration"])
         except ffmpeg.Error:
             self.process_logger.error("无法读取合并后文件的时长", exc_info=True)
             return []
         num_splits = int(duration // split_interval) + 1
         outputs: List[Path] = []
         for index in range(num_splits):
-            output = self.paths.splits_dir / f"{self.paths.slug}_{index:04}.mp4"
+            output = target_splits_dir / f"{self.paths.slug}_{index:04}.mp4"
             start = index * split_interval
             cmd = [
                 "ffmpeg",
@@ -86,7 +90,7 @@ class RecordingProcessor:
                 str(split_interval),
                 "-accurate_seek",
                 "-i",
-                str(self.paths.merged_file),
+                str(merged_file),
                 "-c",
                 "copy",
                 "-avoid_negative_ts",
@@ -177,6 +181,12 @@ class RecordingProcessor:
         Run FFmpeg command with compact logging by default.
         Set env DDRECORDER_FFMPEG_VERBOSE=1 to enable detailed debug output.
         """
+        if self.ffmpeg_logfile_hander.closed:
+            try:
+                self.ffmpeg_logfile_hander = open(self.ffmpeg_logfile_hander.name, mode="a", encoding="utf-8")
+            except Exception:
+                self.process_logger.error("无法打开 FFmpeg 日志文件用于写入", exc_info=True)
+                return False
         verbose = os.environ.get("DDRECORDER_FFMPEG_VERBOSE") == "1"
         patched_cmd = cmd
         if "-loglevel" not in cmd:
@@ -200,6 +210,16 @@ class RecordingProcessor:
                 "FFmpeg 命令失败: %s，详见 %s", " ".join(patched_cmd), self.ffmpeg_logfile_hander.name
             )
             return False
+
+    def close(self) -> None:
+        if self._ffmpeg_log_closed:
+            return
+        try:
+            self.ffmpeg_logfile_hander.close()
+        except Exception:
+            self.process_logger.debug("关闭 FFmpeg 日志失败", exc_info=True)
+        finally:
+            self._ffmpeg_log_closed = True
 
     def _apply_subtitles(self) -> None:
         jsonl_path = self.paths.danmu_json_path

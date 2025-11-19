@@ -99,51 +99,59 @@ class RoomRunner(threading.Thread):
             processor = RecordingProcessor(
                 paths, self.room_config.recorder, self.app_config.root.danmu_ass
             )
-            self.set_state(RunnerState.PROCESSING)
-            self.process_logger.info("房间 %s 进入处理阶段", self.room_config.room_id)
-            process_result = processor.run()
-            if not process_result:
-                self.set_state(RunnerState.ERROR)
-                self.process_logger.error("房间 %s 处理录制文件失败", self.room_config.room_id)
-                continue
-
-            record_cfg = self.room_config.uploader.record
-            if not record_cfg.upload_record:
-                self.set_state(RunnerState.IDLE)
-                self.upload_logger.info("房间 %s 配置为不上传，处理完成后回到待命", self.room_config.room_id)
-                continue
-
-            splits = processor.split(record_cfg.split_interval)
-            if not splits:
-                self.set_state(RunnerState.ERROR)
-                self.process_logger.error("房间 %s 切分录播失败", self.room_config.room_id)
-                continue
-
             try:
-                uploader = BiliUploader(self.app_config, self.room_config, self.room)
-            except Exception:
-                self.upload_logger.error("初始化上传器失败 room=%s", self.room_config.room_id, exc_info=True)
-                self.set_state(RunnerState.ERROR)
-                continue
-            self.set_state(RunnerState.UPLOADING)
-            self.upload_logger.info("房间 %s 开始上传，分段数量 %s", self.room_config.room_id, len(splits))
-            upload_success = False
-            try:
-                upload_ret = uploader.upload_record(session_start, splits)
-                upload_success = upload_ret is not None
-                if upload_success and not record_cfg.keep_record_after_upload:
-                    self._cleanup_splits(processor)
-                    self.upload_logger.info("房间 %s 上传成功，已按配置清理分段", self.room_config.room_id)
-            except Exception:
-                self.upload_logger.error("上传失败 room=%s", self.room_config.room_id, exc_info=True)
+                self.set_state(RunnerState.PROCESSING)
+                self.process_logger.info("房间 %s 进入处理阶段", self.room_config.room_id)
+                process_result = processor.run()
+                if not process_result:
+                    self.set_state(RunnerState.ERROR)
+                    self.process_logger.error("房间 %s 处理录制文件失败", self.room_config.room_id)
+                    continue
+
+                record_cfg = self.room_config.uploader.record
+                if not record_cfg.upload_record:
+                    self.set_state(RunnerState.IDLE)
+                    self.upload_logger.info("房间 %s 配置为不上传，处理完成后回到待命", self.room_config.room_id)
+                    continue
+
+                try:
+                    splits = processor.split(record_cfg.split_interval)
+                except Exception:
+                    self.set_state(RunnerState.ERROR)
+                    self.process_logger.error("房间 %s 切分录播异常", self.room_config.room_id, exc_info=True)
+                    continue
+                if not splits:
+                    self.set_state(RunnerState.ERROR)
+                    self.process_logger.error("房间 %s 切分录播失败", self.room_config.room_id)
+                    continue
+
+                try:
+                    uploader = BiliUploader(self.app_config, self.room_config, self.room)
+                except Exception:
+                    self.upload_logger.error("初始化上传器失败 room=%s", self.room_config.room_id, exc_info=True)
+                    self.set_state(RunnerState.ERROR)
+                    continue
+                self.set_state(RunnerState.UPLOADING)
+                self.upload_logger.info("房间 %s 开始上传，分段数量 %s", self.room_config.room_id, len(splits))
                 upload_success = False
+                try:
+                    upload_ret = uploader.upload_record(session_start, splits)
+                    upload_success = upload_ret is not None
+                    if upload_success and not record_cfg.keep_record_after_upload:
+                        self._cleanup_splits(processor)
+                        self.upload_logger.info("房间 %s 上传成功，已按配置清理分段", self.room_config.room_id)
+                except Exception:
+                    self.upload_logger.error("上传失败 room=%s", self.room_config.room_id, exc_info=True)
+                    upload_success = False
+                finally:
+                    uploader.close()
+                if upload_success:
+                    clear_upload_failed(processor.paths.splits_dir)
+                else:
+                    mark_upload_failed(processor.paths.splits_dir, "upload_failed")
+                self.set_state(RunnerState.IDLE if upload_success else RunnerState.ERROR)
             finally:
-                uploader.close()
-            if upload_success:
-                clear_upload_failed(processor.paths.splits_dir)
-            else:
-                mark_upload_failed(processor.paths.splits_dir, "upload_failed")
-            self.set_state(RunnerState.IDLE if upload_success else RunnerState.ERROR)
+                processor.close()
 
     def _cleanup_splits(self, processor: RecordingProcessor) -> None:
         for item in processor.paths.splits_dir.glob("*"):

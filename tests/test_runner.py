@@ -60,6 +60,9 @@ class FakeProcessor:
         file_path.write_bytes(b"1" * (1_048_576 + 10))
         return [file_path]
 
+    def close(self):
+        pass
+
 
 class FakeUploader:
     def __init__(self, *args, **kwargs):
