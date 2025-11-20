@@ -4,6 +4,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
+import time
 
 import requests
 
@@ -38,11 +39,14 @@ class LiveRecorder:
         self.paths.ensure_session_dirs()
         fragments: List[Path] = []
         self.logger.info("开始录制房间 %s", self.room.room_id)
+        retry_wait = max(5, self.root_cfg.check_interval)
         while self.room.is_live:
             stream_urls = self.room.fetch_stream_urls()
             if not stream_urls:
-                self.logger.warning("未获取到直播流地址，稍后重试")
-                break
+                self.logger.warning("未获取到直播流地址，%s 秒后重试", retry_wait)
+                time.sleep(retry_wait)
+                self.room.refresh()
+                continue
             target_path = self.paths.fragment_path()
             if self._download(stream_urls[0], target_path):
                 fragments.append(target_path)
@@ -50,6 +54,7 @@ class LiveRecorder:
             self.room.refresh()
         if not fragments:
             self.logger.error("本次录制未生成有效片段")
+            self.paths.cleanup_session_dirs()
             return None
         return RecordingResult(start=self.paths.start, record_dir=self.paths.records_dir, fragments=fragments)
 

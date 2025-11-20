@@ -36,6 +36,8 @@ class RoomRunner(threading.Thread):
         self._stop_event.set()
 
     def set_state(self, state: RunnerState) -> None:
+        if self.state == state:
+            return
         self.state = state
         self.state_since = dt.datetime.now()
         logging.info("房间 %s 状态 -> %s", self.room_config.room_id, state.value)

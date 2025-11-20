@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 
 
 def _session_slug(room_id: str, start: dt.datetime) -> str:
@@ -61,6 +62,20 @@ class RecordingPaths:
         self.merged_dir.mkdir(parents=True, exist_ok=True)
         self.merge_conf_path.parent.mkdir(parents=True, exist_ok=True)
         self.danmu_dir.mkdir(parents=True, exist_ok=True)
+
+    def cleanup_session_dirs(self) -> None:
+        for path in (self.records_dir, self.outputs_dir, self.splits_dir, self.danmu_dir):
+            shutil.rmtree(path, ignore_errors=True)
+        for file_path in (
+            self.merge_conf_path,
+            self.danmu_json_path,
+            self.danmu_ass_path,
+            self.merged_file,
+        ):
+            try:
+                file_path.unlink()
+            except FileNotFoundError:
+                continue
 
     def fragment_path(self, timestamp: dt.datetime | None = None) -> Path:
         ts = timestamp or dt.datetime.now()
