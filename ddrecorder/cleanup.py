@@ -52,7 +52,6 @@ def _build_targets(app_config: AppConfig, default_retention: int) -> List[tuple[
     base = app_config.root.data_path / "data"
     log_dir = app_config.root.logger.path
     return [
-        (base / "cred", default_retention),
         (base / "danmu", max(default_retention, DANMU_RETENTION_DAYS)),
         (base / "merge_confs", default_retention),
         (base / "merged", default_retention),

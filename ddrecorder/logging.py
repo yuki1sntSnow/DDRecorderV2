@@ -4,6 +4,7 @@ import datetime as dt
 import logging
 import sys
 from pathlib import Path
+from logging.handlers import TimedRotatingFileHandler
 
 from .config import LoggerConfig
 
@@ -86,12 +87,34 @@ def get_stage_logger(stage: str, _: str | None = None) -> logging.Logger:
     stage_dir.mkdir(parents=True, exist_ok=True)
 
     stage_path = stage_dir / f"{stage}.log"
+    base_name = stage_path.name
     formatter = logging.Formatter(
         fmt="%(asctime)s %(threadName)s %(filename)s:%(lineno)d %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    handler = logging.FileHandler(stage_path, encoding="utf-8", delay=True)
+    handler = TimedRotatingFileHandler(
+        stage_path,
+        when="midnight",
+        interval=1,
+        backupCount=0,  # cleanup task will handle old files
+        encoding="utf-8",
+        delay=True,
+    )
+    handler.suffix = "%Y-%m-%d"
+
+    def _namer(default_name: str, *, base=base_name, prefix=stage) -> str:
+        """
+        Rename rotated file from 'detect.log.2025-11-23' to 'detect.2025-11-23.log'
+        so the timestamp sits before the .log suffix.
+        """
+        path = Path(default_name)
+        timestamp = path.name.removeprefix(f"{base}.")
+        if not timestamp:
+            return default_name
+        return str(path.with_name(f"{prefix}.{timestamp}.log"))
+
+    handler.namer = _namer
     handler.setLevel(logging.INFO)
     handler.setFormatter(formatter)
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import threading
+import time
+from pathlib import Path
 from typing import List
 
 from .config import AppConfig, RoomConfig, AccountConfig
@@ -22,7 +24,9 @@ class RoomRunner(threading.Thread):
         super().__init__(name=f"Room-{room_config.room_id}", daemon=True)
         self.app_config = app_config
         self.room_config = room_config
-        self.room = BiliLiveRoom(room_config.room_id, headers=app_config.root.request_header)
+        self.room = BiliLiveRoom(
+            room_config.room_id, headers=app_config.root.request_header
+        )
         self.state = RunnerState.IDLE
         self.state_since = dt.datetime.now()
         self.last_error: str | None = None
@@ -49,10 +53,14 @@ class RoomRunner(threading.Thread):
         while not self._stop_event.is_set():
             try:
                 self.room.refresh()
-                self.detect_logger.debug("刷新房间 %s，live=%s", self.room_config.room_id, self.room.is_live)
+                self.detect_logger.debug(
+                    "刷新房间 %s，live=%s", self.room_config.room_id, self.room.is_live
+                )
             except Exception:
                 self.last_error = "刷新房间状态失败"
-                self.detect_logger.warning("刷新房间 %s 状态失败", self.room_config.room_id, exc_info=True)
+                self.detect_logger.warning(
+                    "刷新房间 %s 状态失败", self.room_config.room_id, exc_info=True
+                )
                 self.sleep_with_stop(self.app_config.root.check_interval)
                 continue
 
@@ -62,13 +70,18 @@ class RoomRunner(threading.Thread):
                 continue
 
             session_start = dt.datetime.now()
-            paths = RecordingPaths(self.app_config.root.data_path, self.room_config.room_id, session_start)
-            recorder = LiveRecorder(self.room, paths, self.room_config.recorder, self.app_config.root)
+            paths = RecordingPaths(
+                self.app_config.root.data_path, self.room_config.room_id, session_start
+            )
+            recorder = LiveRecorder(
+                self.room, paths, self.room_config.recorder, self.app_config.root
+            )
             danmu_recorder = None
             if self.room_config.recorder.enable_danmu:
                 try:
                     danmu_headers = build_danmu_headers(
-                        self.app_config.root.request_header, self.room_config.uploader.account
+                        self.app_config.root.request_header,
+                        self.room_config.uploader.account,
                     )
                     danmu_recorder = DanmuRecorder(
                         room_id=self.room_config.room_id,
@@ -81,13 +94,17 @@ class RoomRunner(threading.Thread):
                 except Exception:
                     danmu_recorder = None
                     self.record_logger.error(
-                        "弹幕录制器启动失败 room=%s", self.room_config.room_id, exc_info=True
+                        "弹幕录制器启动失败 room=%s",
+                        self.room_config.room_id,
+                        exc_info=True,
                     )
             else:
                 danmu_recorder = None
             self.set_state(RunnerState.RECORDING)
             self.record_logger.info(
-                "房间 %s 开始录制，输出目录 %s", self.room_config.room_id, recorder.paths.records_dir
+                "房间 %s 开始录制，输出目录 %s",
+                self.room_config.room_id,
+                recorder.paths.records_dir,
             )
             record_result = recorder.record()
             if danmu_recorder:
@@ -95,7 +112,9 @@ class RoomRunner(threading.Thread):
                 danmu_recorder.join(timeout=5)
             if not record_result:
                 self.set_state(RunnerState.ERROR)
-                self.record_logger.error("房间 %s 录制失败，无有效片段", self.room_config.room_id)
+                self.record_logger.error(
+                    "房间 %s 录制失败，无有效片段", self.room_config.room_id
+                )
                 continue
 
             processor = RecordingProcessor(
@@ -103,57 +122,126 @@ class RoomRunner(threading.Thread):
             )
             try:
                 self.set_state(RunnerState.PROCESSING)
-                self.process_logger.info("房间 %s 进入处理阶段", self.room_config.room_id)
+                self.process_logger.info(
+                    "房间 %s 进入处理阶段", self.room_config.room_id
+                )
                 process_result = processor.run()
                 if not process_result:
                     self.set_state(RunnerState.ERROR)
-                    self.process_logger.error("房间 %s 处理录制文件失败", self.room_config.room_id)
+                    self.process_logger.error(
+                        "房间 %s 处理录制文件失败", self.room_config.room_id
+                    )
                     continue
 
                 record_cfg = self.room_config.uploader.record
                 if not record_cfg.upload_record:
                     self.set_state(RunnerState.IDLE)
-                    self.upload_logger.info("房间 %s 配置为不上传，处理完成后回到待命", self.room_config.room_id)
+                    self.upload_logger.info(
+                        "房间 %s 配置为不上传，处理完成后回到待命",
+                        self.room_config.room_id,
+                    )
                     continue
 
                 try:
                     splits = processor.split(record_cfg.split_interval)
                 except Exception:
                     self.set_state(RunnerState.ERROR)
-                    self.process_logger.error("房间 %s 切分录播异常", self.room_config.room_id, exc_info=True)
+                    self.process_logger.error(
+                        "房间 %s 切分录播异常", self.room_config.room_id, exc_info=True
+                    )
                     continue
                 if not splits:
                     self.set_state(RunnerState.ERROR)
-                    self.process_logger.error("房间 %s 切分录播失败", self.room_config.room_id)
+                    self.process_logger.error(
+                        "房间 %s 切分录播失败", self.room_config.room_id
+                    )
                     continue
 
-                try:
-                    uploader = BiliUploader(self.app_config, self.room_config, self.room)
-                except Exception:
-                    self.upload_logger.error("初始化上传器失败 room=%s", self.room_config.room_id, exc_info=True)
-                    self.set_state(RunnerState.ERROR)
-                    continue
-                self.set_state(RunnerState.UPLOADING)
-                self.upload_logger.info("房间 %s 开始上传，分段数量 %s", self.room_config.room_id, len(splits))
-                upload_success = False
-                try:
-                    upload_ret = uploader.upload_record(session_start, splits)
-                    upload_success = upload_ret is not None
-                    if upload_success and not record_cfg.keep_record_after_upload:
-                        self._cleanup_splits(processor)
-                        self.upload_logger.info("房间 %s 上传成功，已按配置清理分段", self.room_config.room_id)
-                except Exception:
-                    self.upload_logger.error("上传失败 room=%s", self.room_config.room_id, exc_info=True)
-                    upload_success = False
-                finally:
-                    uploader.close()
-                if upload_success:
-                    clear_upload_failed(processor.paths.splits_dir)
-                else:
-                    mark_upload_failed(processor.paths.splits_dir, "upload_failed")
-                self.set_state(RunnerState.IDLE if upload_success else RunnerState.ERROR)
+                upload_success = self._upload_with_retry(
+                    session_start,
+                    splits,
+                    record_cfg.keep_record_after_upload,
+                    processor,
+                )
+                self.set_state(
+                    RunnerState.IDLE if upload_success else RunnerState.ERROR
+                )
             finally:
                 processor.close()
+
+    def _do_upload(
+        self,
+        session_start: dt.datetime,
+        splits: List[Path],
+        cleanup_on_success: bool,
+        processor: RecordingProcessor,
+    ) -> bool:
+        """执行一次上传尝试，返回是否成功"""
+        try:
+            uploader = BiliUploader(self.app_config, self.room_config, self.room)
+        except Exception:
+            self.upload_logger.error(
+                "初始化上传器失败 room=%s", self.room_config.room_id, exc_info=True
+            )
+            return False
+        try:
+            upload_ret = uploader.upload_record(session_start, splits)
+            if upload_ret is not None:
+                if cleanup_on_success:
+                    self._cleanup_splits(processor)
+                    self.upload_logger.info(
+                        "房间 %s 上传成功，已按配置清理分段", self.room_config.room_id
+                    )
+                return True
+            return False
+        except Exception:
+            self.upload_logger.error(
+                "上传失败 room=%s", self.room_config.room_id, exc_info=True
+            )
+            return False
+        finally:
+            uploader.close()
+
+    def _upload_with_retry(
+        self,
+        session_start: dt.datetime,
+        splits: List[Path],
+        cleanup_on_success: bool,
+        processor: RecordingProcessor,
+        retry_delay: int = 3600,
+    ) -> bool:
+        """上传并在失败时重试一次，重试间隔默认60分钟"""
+        self.set_state(RunnerState.UPLOADING)
+        self.upload_logger.info(
+            "房间 %s 开始上传，分段数量 %s", self.room_config.room_id, len(splits)
+        )
+
+        if self._do_upload(session_start, splits, cleanup_on_success, processor):
+            clear_upload_failed(processor.paths.splits_dir)
+            return True
+
+        # 首次失败，等待后重试
+        self.upload_logger.warning(
+            "房间 %s 上传失败，将在 %s 分钟后重试",
+            self.room_config.room_id,
+            retry_delay // 60,
+        )
+        self.set_state(RunnerState.IDLE)
+        time.sleep(retry_delay)
+
+        # 重试上传
+        self.set_state(RunnerState.UPLOADING)
+        self.upload_logger.info("房间 %s 开始重试上传", self.room_config.room_id)
+        if self._do_upload(session_start, splits, cleanup_on_success, processor):
+            clear_upload_failed(processor.paths.splits_dir)
+            return True
+
+        # 重试也失败，标记失败
+        self.upload_logger.error(
+            "房间 %s 重试上传仍失败，标记为上传失败", self.room_config.room_id
+        )
+        mark_upload_failed(processor.paths.splits_dir, "upload_failed_after_retry")
+        return False
 
     def _cleanup_splits(self, processor: RecordingProcessor) -> None:
         for item in processor.paths.splits_dir.glob("*"):
@@ -212,7 +300,9 @@ class RunnerController:
 
     def _build_status_table(self) -> str:
         now = dt.datetime.now()
-        header = "DDRecorder  当前时间：{} 正在工作线程数：{}".format(now, threading.active_count())
+        header = "DDRecorder  当前时间：{} 正在工作线程数：{}".format(
+            now, threading.active_count()
+        )
         border = "+-------+----------+----------+----------+----------+---------------------+"
         title = "|  TID  |   平台   |  房间号  | 直播状态 | 程序状态 |     状态变化时间     |"
         rows = [border, title, border]
@@ -225,7 +315,12 @@ class RunnerController:
             since = runner.state_since.strftime("%Y-%m-%d %H:%M:%S")
             rows.append(
                 "| {tid:^5} | {plat:^8} | {room:^8} | {live:^8} | {state:^8} | {since:^19} |".format(
-                    tid=tid, plat=platform, room=room_id, live=live_flag, state=state, since=since
+                    tid=tid,
+                    plat=platform,
+                    room=room_id,
+                    live=live_flag,
+                    state=state,
+                    since=since,
                 )
             )
         rows.append(border)
