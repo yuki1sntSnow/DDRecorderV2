@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from pathlib import Path
 from typing import Dict, List
 
@@ -14,7 +15,9 @@ from .utils import session_tokens
 
 
 class BiliUploader:
-    def __init__(self, app_config: AppConfig, room_config: RoomConfig, room: BiliLiveRoom) -> None:
+    def __init__(
+        self, app_config: AppConfig, room_config: RoomConfig, room: BiliLiveRoom
+    ) -> None:
         self.app_config = app_config
         self.room_config = room_config
         self.room = room
@@ -29,7 +32,9 @@ class BiliUploader:
             if not cookies and not self._refresh_account_credentials():
                 raise ValueError("缺少上传账号 cookies 配置")
             cookie_payload = {
-                "cookie_info": {"cookies": [{"name": k, "value": v} for k, v in cookies.items()]}
+                "cookie_info": {
+                    "cookies": [{"name": k, "value": v} for k, v in cookies.items()]
+                }
             }
             try:
                 self.client.login_by_cookies(cookie_payload)
@@ -74,6 +79,34 @@ class BiliUploader:
         except Exception:
             self.logger.debug("关闭上传客户端失败", exc_info=True)
 
+    def _upload_file_with_retry(self, file_path: str, max_retries: int = 10) -> Dict:
+        """上传单个文件，遇到临时性错误时自动重试"""
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return self.client.upload_file(
+                    file_path, lines=self.app_config.root.uploader.lines
+                )
+            except (KeyError, ConnectionError, TimeoutError) as e:
+                last_error = e
+                if attempt < max_retries:
+                    wait_time = (
+                        attempt + 1
+                    ) * 5  # 5, 10, 15, 20, 25, 30, 35, 40, 45, 50 秒
+                    self.logger.warning(
+                        "上传 %s 失败 (%s: %s)，%d秒后重试 (%d/%d)",
+                        file_path,
+                        type(e).__name__,
+                        e,
+                        wait_time,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    time.sleep(wait_time)
+                else:
+                    self.logger.error("上传 %s 失败，已达最大重试次数", file_path)
+        raise last_error  # type: ignore[misc]
+
     def upload_record(self, start: dt.datetime, splits: List[Path]) -> Dict | None:
         record_cfg = self.room_config.uploader.record
         if not record_cfg.upload_record:
@@ -93,7 +126,7 @@ class BiliUploader:
         for split in sorted(splits):
             if split.stat().st_size < 1_048_576:
                 continue
-            part = self.client.upload_file(str(split.resolve()), lines=self.app_config.root.uploader.lines)
+            part = self._upload_file_with_retry(str(split.resolve()))
             part["title"] = split.stem.split("_")[-1]
             part["desc"] = uploader.desc
             uploader.append(part)
