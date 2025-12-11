@@ -79,7 +79,7 @@ class BiliUploader:
         except Exception:
             self.logger.debug("关闭上传客户端失败", exc_info=True)
 
-    def _upload_file_with_retry(self, file_path: str, max_retries: int = 10) -> Dict:
+    def _upload_file_with_retry(self, file_path: str, max_retries: int = 1) -> Dict:
         """上传单个文件，遇到临时性错误时自动重试"""
         last_error = None
         for attempt in range(max_retries + 1):
@@ -103,6 +103,18 @@ class BiliUploader:
                         max_retries,
                     )
                     time.sleep(wait_time)
+                    # 重新初始化客户端以清理可能被污染的连接状态
+                    # 保存当前 video 数据（包含已上传的分段）
+                    old_video = self.client.video
+                    try:
+                        self.client.close()
+                    except Exception:
+                        pass
+                    self.client = BiliBili(Data())
+                    self._login()
+                    # 恢复 video 信息（保持已上传分段）
+                    if old_video is not None:
+                        self.client.video = old_video
                 else:
                     self.logger.error("上传 %s 失败，已达最大重试次数", file_path)
         raise last_error  # type: ignore[misc]

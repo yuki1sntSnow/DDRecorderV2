@@ -225,5 +225,5 @@ config/test_config.json
 
 # Generated credentials
 config/cookies.json
-
+cookies.json
 MAINTENANCE.md
