@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
+import shutil
 import signal
 import sys
 import time
 from pathlib import Path
 
 from .cleanup import CleanupScheduler, perform_cleanup
-from .config import AppConfig, RoomConfig, load_config
+from .config import AppConfig, RecorderConfig, RoomConfig, load_config
 from .logging import configure_logging
 from .paths import RecordingPaths
 from .processor import RecordingProcessor
@@ -58,6 +60,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="手动上传指定目录下的 mp4 分段（路径为 splits 目录）",
     )
     parser.add_argument(
+        "--process-path",
+        help="手动处理/合并指定 flv 文件或目录（自动生成 merged mp4，可配合 --subtitle-path）",
+    )
+    parser.add_argument(
         "--split-path",
         help="手动切分已合并的 mp4 文件（路径为 *_merged.mp4 或包含该文件的目录）",
     )
@@ -68,7 +74,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--room-id",
-        help="配合 --upload-path/--split-path 指定房间号；缺省尝试从路径推断",
+        help="配合 --upload-path/--split-path/--process-path 指定房间号；缺省尝试从路径推断",
+    )
+    parser.add_argument(
+        "--subtitle-path",
+        help="配合 --process-path 指定弹幕字幕（支持 .jsonl 或 .ass）",
     )
     parser.add_argument(
         "--dump-credentials",
@@ -131,6 +141,11 @@ def main() -> None:
         return
     if args.dump_credentials:
         dump_and_exit(cfg_path, args.account)
+        return
+    if args.process_path:
+        manual_process_from_cli(
+            cfg_path, Path(args.process_path), subtitle_path=args.subtitle_path, room_id=args.room_id
+        )
         return
     if args.split_path:
         manual_split_from_cli(
@@ -204,6 +219,67 @@ def manual_upload_from_cli(config_path: Path, media_path: Path, room_id: str | N
     if not success:
         raise SystemExit("手动上传失败")
     logging.info("Manual upload finished successfully")
+
+
+def manual_process_from_cli(
+    config_path: Path,
+    source_path: Path,
+    subtitle_path: str | None = None,
+    room_id: str | None = None,
+) -> None:
+    logging.info(
+        "Manual process start: config=%s source=%s subtitle=%s",
+        config_path,
+        source_path,
+        subtitle_path or "-",
+    )
+    if not source_path.exists():
+        raise SystemExit(f"指定的 flv 文件或目录不存在: {source_path}")
+    app_config = load_config(config_path)
+    configure_logging(app_config.root.logger)
+
+    flv_files = _collect_flv_files(source_path)
+    if not flv_files:
+        raise SystemExit(f"未在 {source_path} 中找到 flv 文件")
+
+    slug_source = source_path.stem if source_path.is_file() else source_path.name
+    inferred_room_id = room_id or _infer_room_id_from_slug(slug_source) or _infer_room_id_from_path(source_path)
+    final_room_id = inferred_room_id or "manual"
+
+    fallback_file = min(flv_files, key=lambda p: p.stat().st_mtime)
+    start_time = _infer_start_time_from_slug(slug_source, fallback_file)
+    paths = RecordingPaths(app_config.root.data_path, final_room_id, start_time)
+    paths.ensure_session_dirs()
+
+    for flv in flv_files:
+        target = paths.records_dir / flv.name
+        _link_or_copy(flv, target)
+
+    if subtitle_path:
+        subtitle = Path(subtitle_path)
+        if not subtitle.exists():
+            raise SystemExit(f"指定的字幕文件不存在: {subtitle}")
+        if subtitle.suffix.lower() == ".jsonl":
+            shutil.copy2(subtitle, paths.danmu_json_path)
+        elif subtitle.suffix.lower() == ".ass":
+            shutil.copy2(subtitle, paths.danmu_ass_path)
+        else:
+            raise SystemExit("字幕文件仅支持 .jsonl 或 .ass")
+
+    room_config = next(
+        (room for room in app_config.rooms if str(room.room_id) == str(final_room_id)),
+        None,
+    )
+    recorder_cfg = room_config.recorder if room_config else RecorderConfig(keep_raw_record=True)
+    processor = RecordingProcessor(paths, recorder_cfg, app_config.root.danmu_ass)
+    try:
+        result = processor.run()
+    finally:
+        processor.close()
+    if not result:
+        raise SystemExit("处理/合并失败")
+    logging.info("处理/合并完成，输出文件 %s", result.merged_file)
+    print(f"[INFO] 已生成合并文件 -> {result.merged_file}")
 
 
 def _select_room_config(app_config: AppConfig, media_path: Path, room_id: str | None) -> RoomConfig:
@@ -303,6 +379,26 @@ def _manual_upload(app_config: AppConfig, room_config: RoomConfig, media_path: P
         return False
     finally:
         uploader.close()
+
+
+def _collect_flv_files(source_path: Path) -> list[Path]:
+    if source_path.is_file():
+        return [source_path]
+    return sorted(p for p in source_path.glob("*.flv") if p.is_file())
+
+
+def _link_or_copy(source: Path, target: Path) -> None:
+    try:
+        if source.resolve() == target.resolve():
+            return
+    except OSError:
+        pass
+    if target.exists():
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
 
 
 if __name__ == "__main__":

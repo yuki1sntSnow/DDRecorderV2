@@ -223,10 +223,11 @@ class RecordingProcessor:
 
     def _apply_subtitles(self) -> None:
         jsonl_path = self.paths.danmu_json_path
-        if not jsonl_path.exists():
-            return
         ass_path = self.paths.danmu_ass_path
-        if not jsonl_to_ass(jsonl_path, ass_path, self.paths.start, self.danmu_ass):
+        if jsonl_path.exists():
+            if not jsonl_to_ass(jsonl_path, ass_path, self.paths.start, self.danmu_ass):
+                return
+        elif not ass_path.exists():
             return
         temp_file = self.paths.merged_file.with_suffix(".nosub.mp4")
         try:
@@ -258,4 +259,3 @@ class RecordingProcessor:
             self.process_logger.info("已将弹幕压制到合并文件中")
         else:
             self.process_logger.warning("字幕压制失败，回退到无字幕版本")
-            temp_file.replace(self.paths.merged_file)
