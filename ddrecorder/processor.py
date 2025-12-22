@@ -36,7 +36,7 @@ class RecordingProcessor:
         self.ffmpeg_logfile_hander = open(get_ffmpeg_log_path(slug), mode="a", encoding="utf-8")
         self._ffmpeg_log_closed = False
 
-    def run(self) -> ProcessResult | None:
+    def run(self, keep_ts: bool = False) -> ProcessResult | None:
         self.process_logger.info("开始处理录制片段，目录 %s", self.paths.records_dir)
         for attempt in range(1, 4):
             ts_files = self._transmux_fragments()
@@ -46,7 +46,8 @@ class RecordingProcessor:
             if not self._concat(ts_files):
                 self.process_logger.error("第 %s 次 FFmpeg concat 失败", attempt)
                 continue
-            self._cleanup_ts(ts_files)
+            if not keep_ts:
+                self._cleanup_ts(ts_files)
             self._apply_subtitles()
             if not self.recorder_cfg.keep_raw_record:
                 self._cleanup_fragments()
@@ -112,23 +113,7 @@ class RecordingProcessor:
                 if fragment.stat().st_size < 1_048_576:
                     continue
                 ts_path = fragment.with_suffix(".ts")
-                cmd = [
-                    "ffmpeg",
-                    "-y",
-                    "-fflags",
-                    "+discardcorrupt",
-                    "-i",
-                    str(fragment),
-                    "-c",
-                    "copy",
-                    "-bsf:v",
-                    "h264_mp4toannexb",
-                    "-acodec",
-                    "aac",
-                    "-f",
-                    "mpegts",
-                    str(ts_path),
-                ]
+                cmd = self._build_transmux_cmd(fragment, ts_path)
                 if self._run_cmd(cmd):
                     ts_files.append(ts_path)
                     merge_file.write(f"file '{ts_path.resolve()}'\n")
@@ -259,3 +244,43 @@ class RecordingProcessor:
             self.process_logger.info("已将弹幕压制到合并文件中")
         else:
             self.process_logger.warning("字幕压制失败，回退到无字幕版本")
+
+    def _build_transmux_cmd(self, fragment: Path, ts_path: Path) -> list[str]:
+        codec = self._detect_video_codec(fragment)
+        bsf = None
+        if codec == "h264":
+            bsf = "h264_mp4toannexb"
+        elif codec == "hevc":
+            bsf = "hevc_mp4toannexb"
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-fflags",
+            "+discardcorrupt",
+            "-i",
+            str(fragment),
+            "-c",
+            "copy",
+        ]
+        if bsf:
+            cmd += ["-bsf:v", bsf]
+        cmd += [
+            "-acodec",
+            "aac",
+            "-f",
+            "mpegts",
+            str(ts_path),
+        ]
+        return cmd
+
+    def _detect_video_codec(self, fragment: Path) -> str | None:
+        try:
+            probe = ffmpeg.probe(str(fragment))
+        except ffmpeg.Error:
+            self.process_logger.debug("探测视频编码失败: %s", fragment, exc_info=True)
+            return None
+        streams = probe.get("streams") or []
+        video = next((s for s in streams if s.get("codec_type") == "video"), None)
+        if not video:
+            return None
+        return (video.get("codec_name") or "").lower()

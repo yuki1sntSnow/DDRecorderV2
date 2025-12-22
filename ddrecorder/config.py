@@ -238,10 +238,11 @@ def _resolve_base_dir(config_path: Path) -> Path:
     return base
 
 
-def load_config(path: Path) -> AppConfig:
+def load_config(path: Path, *, refresh_credentials: bool = True) -> AppConfig:
     with open(path, encoding="utf-8") as f:
         raw_config = json.load(f)
-    ensure_account_credentials(raw_config, path)
+    if refresh_credentials:
+        ensure_account_credentials(raw_config, path)
     base_dir = _resolve_base_dir(path)
     root = RootConfig.from_dict(raw_config.get("root", {}), base_dir)
     rooms = [

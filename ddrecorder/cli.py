@@ -208,7 +208,9 @@ def manual_split_from_cli(
     print(f"[INFO] 已生成 {len(splits)} 个分段 -> {paths.splits_dir}")
 
 
-def manual_upload_from_cli(config_path: Path, media_path: Path, room_id: str | None = None) -> None:
+def manual_upload_from_cli(
+    config_path: Path, media_path: Path, room_id: str | None = None
+) -> None:
     logging.info("Manual upload start: config=%s media=%s", config_path, media_path)
     if not media_path.exists():
         raise SystemExit(f"指定的上传路径不存在: {media_path}")
@@ -235,7 +237,7 @@ def manual_process_from_cli(
     )
     if not source_path.exists():
         raise SystemExit(f"指定的 flv 文件或目录不存在: {source_path}")
-    app_config = load_config(config_path)
+    app_config = load_config(config_path, refresh_credentials=False)
     configure_logging(app_config.root.logger)
 
     flv_files = _collect_flv_files(source_path)
@@ -273,7 +275,7 @@ def manual_process_from_cli(
     recorder_cfg = room_config.recorder if room_config else RecorderConfig(keep_raw_record=True)
     processor = RecordingProcessor(paths, recorder_cfg, app_config.root.danmu_ass)
     try:
-        result = processor.run()
+        result = processor.run(keep_ts=True)
     finally:
         processor.close()
     if not result:

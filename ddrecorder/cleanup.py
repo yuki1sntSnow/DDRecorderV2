@@ -87,7 +87,7 @@ def _purge_path(target: Path, threshold: float, writer) -> Tuple[int, int]:
                 if has_upload_failed_marker(dir_path):
                     logging.debug("跳过带失败标记的子目录 %s", dir_path)
                     continue
-                if not any(dir_path.iterdir()) and dir_path.stat().st_mtime < threshold:
+                if not any(dir_path.iterdir()):
                     dir_path.rmdir()
                     dirs_removed += 1
                     writer(f"Removed dir {dir_path}")
