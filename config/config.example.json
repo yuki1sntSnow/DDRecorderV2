@@ -12,7 +12,7 @@
       "lines": "AUTO"
     },
     "danmu_ass": {
-      "font": "Microsoft YaHei",
+      "font": "Noto Sans CJK SC",
       "font_size": 45,
       "duration": 6,
       "row_count": 12,

@@ -47,7 +47,7 @@ python -m ddrecorder --upload-path data/splits/<room>_<time> [--room-id <room>]
     "logger": { "log_path": "./log", "log_level": "INFO" },
     "uploader": { "lines": "AUTO" },
     "danmu_ass": {
-      "font": "Microsoft YaHei",
+      "font": "Noto Sans CJK SC",
       "font_size": 45,
       "duration": 6,
       "row_count": 12,
@@ -89,6 +89,7 @@ python -m ddrecorder --upload-path data/splits/<room>_<time> [--room-id <room>]
 - `enable_danmu`: 采集弹幕并生成 ASS，合并时自动压制到视频。
 - `keep_raw_record` / `keep_record_after_upload`: 控制是否保留 flv/mp4。
 - 账号可配置多份：在 `root.account.<name>` 定义，在 `spec[].uploader.account` 填名称复用。
+- 字体：Linux 默认使用 `Noto Sans CJK SC`，如需 Emoji 建议安装 `fonts-noto-cjk`、`fonts-noto-color-emoji` 并按需修改 `danmu_ass.font`。
 
 更详细字段说明见 `config/config.example.json`。
 

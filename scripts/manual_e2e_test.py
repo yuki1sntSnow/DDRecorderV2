@@ -165,7 +165,13 @@ def main() -> None:
         raise SystemExit("录制失败，未生成片段")
     print(f"[INFO] 录制完成，开始处理: {record_result.record_dir}")
 
-    processor = RecordingProcessor(paths, room_cfg.recorder, app_config.root.danmu_ass)
+    processor = RecordingProcessor(
+        paths,
+        room_cfg.recorder,
+        app_config.root.danmu_ass,
+        app_config.root.ffmpeg_path,
+        app_config.root.ffprobe_path,
+    )
     uploader: BiliUploader | None = None
     try:
         print("[INFO] 处理/合并开始 ...")

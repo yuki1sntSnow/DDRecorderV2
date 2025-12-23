@@ -118,7 +118,11 @@ class RoomRunner(threading.Thread):
                 continue
 
             processor = RecordingProcessor(
-                paths, self.room_config.recorder, self.app_config.root.danmu_ass
+                paths,
+                self.room_config.recorder,
+                self.app_config.root.danmu_ass,
+                self.app_config.root.ffmpeg_path,
+                self.app_config.root.ffprobe_path,
             )
             try:
                 self.set_state(RunnerState.PROCESSING)

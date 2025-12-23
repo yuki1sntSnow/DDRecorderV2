@@ -52,7 +52,13 @@ def main() -> None:
     start_dt = _parse_slug_time(slug)
     paths = RecordingPaths(app_config.root.data_path, args.room, start_dt)
 
-    processor = RecordingProcessor(paths, room_cfg.recorder, app_config.root.danmu_ass)
+    processor = RecordingProcessor(
+        paths,
+        room_cfg.recorder,
+        app_config.root.danmu_ass,
+        app_config.root.ffmpeg_path,
+        app_config.root.ffprobe_path,
+    )
     try:
         result = processor.run()
         if not result:

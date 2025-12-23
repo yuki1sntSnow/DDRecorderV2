@@ -144,7 +144,10 @@ def main() -> None:
         return
     if args.process_path:
         manual_process_from_cli(
-            cfg_path, Path(args.process_path), subtitle_path=args.subtitle_path, room_id=args.room_id
+            cfg_path,
+            Path(args.process_path),
+            subtitle_path=args.subtitle_path,
+            room_id=args.room_id,
         )
         return
     if args.split_path:
@@ -197,7 +200,13 @@ def manual_split_from_cli(
     interval = split_interval or room_config.uploader.record.split_interval
 
     paths = RecordingPaths(app_config.root.data_path, room_config.room_id, start_time)
-    processor = RecordingProcessor(paths, room_config.recorder, app_config.root.danmu_ass)
+    processor = RecordingProcessor(
+        paths,
+        room_config.recorder,
+        app_config.root.danmu_ass,
+        app_config.root.ffmpeg_path,
+        app_config.root.ffprobe_path,
+    )
     try:
         splits = processor.split(interval, merged_override=merged_file, splits_dir=paths.splits_dir)
     finally:
@@ -261,10 +270,20 @@ def manual_process_from_cli(
         subtitle = Path(subtitle_path)
         if not subtitle.exists():
             raise SystemExit(f"指定的字幕文件不存在: {subtitle}")
+        try:
+            # 避免源字幕与目标路径相同导致 SameFileError
+            subtitle_same_as = {
+                ".jsonl": subtitle.resolve() == paths.danmu_json_path.resolve(),
+                ".ass": subtitle.resolve() == paths.danmu_ass_path.resolve(),
+            }
+        except OSError:
+            subtitle_same_as = {".jsonl": False, ".ass": False}
         if subtitle.suffix.lower() == ".jsonl":
-            shutil.copy2(subtitle, paths.danmu_json_path)
+            if not subtitle_same_as[".jsonl"]:
+                shutil.copy2(subtitle, paths.danmu_json_path)
         elif subtitle.suffix.lower() == ".ass":
-            shutil.copy2(subtitle, paths.danmu_ass_path)
+            if not subtitle_same_as[".ass"]:
+                shutil.copy2(subtitle, paths.danmu_ass_path)
         else:
             raise SystemExit("字幕文件仅支持 .jsonl 或 .ass")
 
@@ -273,7 +292,13 @@ def manual_process_from_cli(
         None,
     )
     recorder_cfg = room_config.recorder if room_config else RecorderConfig(keep_raw_record=True)
-    processor = RecordingProcessor(paths, recorder_cfg, app_config.root.danmu_ass)
+    processor = RecordingProcessor(
+        paths,
+        recorder_cfg,
+        app_config.root.danmu_ass,
+        app_config.root.ffmpeg_path,
+        app_config.root.ffprobe_path,
+    )
     try:
         result = processor.run(keep_ts=True)
     finally:

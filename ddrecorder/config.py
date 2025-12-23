@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import platform
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -14,6 +15,16 @@ def _ensure_path(path_like: str, base: Path) -> Path:
     if not path.is_absolute():
         path = (base / path).resolve()
     return path
+
+
+def _default_font() -> str:
+    """Pick a sensible default font for ASS subtitles by platform."""
+    system = platform.system()
+    if system == "Windows":
+        return "Microsoft YaHei"
+    if system == "Darwin":
+        return "PingFang SC"
+    return "Noto Sans CJK SC"
 
 
 @dataclass
@@ -79,7 +90,7 @@ def _account_from_raw(entry, base: Path) -> AccountConfig:
 class DanmuAssConfig:
     play_res_x: int = 1920
     play_res_y: int = 1080
-    font: str = "Microsoft YaHei"
+    font: str = field(default_factory=_default_font)
     font_size: int = 45
     duration: float = 6.0
     row_count: int = 12
@@ -93,7 +104,7 @@ class DanmuAssConfig:
         return cls(
             play_res_x=int(data.get("play_res_x", 1920)),
             play_res_y=int(data.get("play_res_y", 1080)),
-            font=data.get("font", "Microsoft YaHei"),
+            font=data.get("font", _default_font()),
             font_size=int(data.get("font_size", 45)),
             duration=float(data.get("duration", 6.0)),
             row_count=int(data.get("row_count", 12)),
@@ -197,6 +208,8 @@ class RootConfig:
     uploader: RootUploaderConfig
     accounts: Dict[str, AccountConfig]
     danmu_ass: DanmuAssConfig
+    ffmpeg_path: Path | None
+    ffprobe_path: Path | None
 
     @classmethod
     def from_dict(cls, data: Dict, base: Path) -> "RootConfig":
@@ -206,6 +219,10 @@ class RootConfig:
             for name, entry in (data.get("account", {}) or {}).items()
         }
         data_path = _ensure_path(data.get("data_path", "./"), base)
+        ffmpeg_raw = data.get("ffmpeg_path")
+        ffprobe_raw = data.get("ffprobe_path")
+        ffmpeg_path = _ensure_path(ffmpeg_raw, base) if ffmpeg_raw else None
+        ffprobe_path = _ensure_path(ffprobe_raw, base) if ffprobe_raw else None
         return cls(
             check_interval=int(data.get("check_interval", 60)),
             print_interval=int(data.get("print_interval", 60)),
@@ -215,6 +232,8 @@ class RootConfig:
             uploader=RootUploaderConfig.from_dict(data.get("uploader", {})),
             accounts=accounts,
             danmu_ass=DanmuAssConfig.from_dict(data.get("danmu_ass", {})),
+            ffmpeg_path=ffmpeg_path,
+            ffprobe_path=ffprobe_path,
         )
 
 

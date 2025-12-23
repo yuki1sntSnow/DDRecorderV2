@@ -7,6 +7,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
+
+def _resolve_ff_bin(
+    env_key: str,
+    configured_path: str | Path | None,
+    fallback: str,
+) -> str:
+    """
+    Resolve ffmpeg/ffprobe binary path with compatibility:
+    1) Respect explicit environment override.
+    2) If configured path exists and is executable, use it.
+    3) Otherwise fall back to system PATH lookup.
+    """
+    env_val = os.environ.get(env_key)
+    if env_val:
+        return env_val
+    if configured_path:
+        candidate = Path(configured_path)
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return fallback
+
+
 import ffmpeg
 
 from .config import RecorderConfig, DanmuAssConfig
@@ -27,6 +49,8 @@ class RecordingProcessor:
         paths: RecordingPaths,
         recorder_cfg: RecorderConfig,
         danmu_ass: DanmuAssConfig,
+        ffmpeg_path: str | Path | None = None,
+        ffprobe_path: str | Path | None = None,
     ) -> None:
         self.paths = paths
         self.recorder_cfg = recorder_cfg
@@ -35,6 +59,19 @@ class RecordingProcessor:
         self.process_logger = get_stage_logger("process", slug)
         self.ffmpeg_logfile_hander = open(get_ffmpeg_log_path(slug), mode="a", encoding="utf-8")
         self._ffmpeg_log_closed = False
+        # Resolve ffmpeg/ffprobe binary paths with env override > configured path > system PATH.
+        self.ffmpeg_bin = _resolve_ff_bin(
+            "FFMPEG_BIN",
+            ffmpeg_path,
+            shutil.which("ffmpeg") or "ffmpeg",
+        )
+        self.ffprobe_bin = _resolve_ff_bin(
+            "FFPROBE_BIN",
+            ffprobe_path,
+            shutil.which("ffprobe") or "ffprobe",
+        )
+        os.environ["FFMPEG_BINARY"] = self.ffmpeg_bin
+        os.environ["FFPROBE_BINARY"] = self.ffprobe_bin
 
     def run(self, keep_ts: bool = False) -> ProcessResult | None:
         self.process_logger.info("开始处理录制片段，目录 %s", self.paths.records_dir)
@@ -83,7 +120,7 @@ class RecordingProcessor:
             output = target_splits_dir / f"{self.paths.slug}_{index:04}.mp4"
             start = index * split_interval
             cmd = [
-                "ffmpeg",
+                self.ffmpeg_bin,
                 "-y",
                 "-ss",
                 str(start),
@@ -125,7 +162,7 @@ class RecordingProcessor:
         if not ts_files:
             return False
         cmd = [
-            "ffmpeg",
+            self.ffmpeg_bin,
             "-y",
             "-f",
             "concat",
@@ -162,23 +199,17 @@ class RecordingProcessor:
                 self.process_logger.debug("删除 TS 片段失败: %s", ts_file, exc_info=True)
 
     def _run_cmd(self, cmd: List[str]) -> bool:
-        """
-        Run FFmpeg command with compact logging by default.
-        Set env DDRECORDER_FFMPEG_VERBOSE=1 to enable detailed debug output.
-        """
+        """Run FFmpeg command; emit FFmpeg output at warning level by default."""
         if self.ffmpeg_logfile_hander.closed:
             try:
                 self.ffmpeg_logfile_hander = open(self.ffmpeg_logfile_hander.name, mode="a", encoding="utf-8")
             except Exception:
                 self.process_logger.error("无法打开 FFmpeg 日志文件用于写入", exc_info=True)
                 return False
-        verbose = os.environ.get("DDRECORDER_FFMPEG_VERBOSE") == "1"
+        # Emit FFmpeg logs at warning level unless caller overrides.
         patched_cmd = cmd
         if "-loglevel" not in cmd:
-            loglevel = "level+debug" if verbose else "error"
-            patched_cmd = [cmd[0], "-hide_banner", "-nostdin", "-loglevel", loglevel]
-            if verbose:
-                patched_cmd += ["-stats", "-stats_period", "1"]
+            patched_cmd = [cmd[0], "-hide_banner", "-nostdin", "-loglevel", "warning"]
             patched_cmd += cmd[1:]
         try:
             subprocess.run(
@@ -223,7 +254,7 @@ class RecordingProcessor:
             self.process_logger.warning("无法准备字幕压制临时文件，跳过字幕压制")
             return
         cmd = [
-            "ffmpeg",
+            self.ffmpeg_bin,
             "-y",
             "-i",
             str(temp_file),
@@ -253,7 +284,7 @@ class RecordingProcessor:
         elif codec == "hevc":
             bsf = "hevc_mp4toannexb"
         cmd = [
-            "ffmpeg",
+            self.ffmpeg_bin,
             "-y",
             "-fflags",
             "+discardcorrupt",
