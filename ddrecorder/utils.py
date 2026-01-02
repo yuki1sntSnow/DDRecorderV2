@@ -16,7 +16,7 @@ def rough_time(hour: int) -> str:
 
 def session_tokens(start: dt.datetime, room_name: str) -> dict:
     return {
-        "date": start.strftime("%Y年%m月%d日"),
+        "date": start.strftime("%Y年%m月%d日%H时%M分%S秒"),
         "year": start.year,
         "month": start.month,
         "day": start.day,

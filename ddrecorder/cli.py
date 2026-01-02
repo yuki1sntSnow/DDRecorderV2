@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .cleanup import CleanupScheduler, perform_cleanup
 from .config import AppConfig, RecorderConfig, RoomConfig, load_config
+from .danmaku_ass import jsonl_to_ass
 from .logging import configure_logging
 from .paths import RecordingPaths
 from .processor import RecordingProcessor
@@ -71,6 +72,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--split-interval",
         type=int,
         help="配合 --split-path 指定分段长度（秒），缺省读取配置文件",
+    )
+    parser.add_argument(
+        "--ass-from-json",
+        help="从指定 jsonl 生成 ass 弹幕文件（支持文件或包含 danmu.jsonl 的目录）",
+    )
+    parser.add_argument(
+        "--burn-path",
+        help="对已有 merged/nosub mp4 重新压制弹幕（可配合 --subtitle-path）",
     )
     parser.add_argument(
         "--room-id",
@@ -146,6 +155,21 @@ def main() -> None:
         manual_process_from_cli(
             cfg_path,
             Path(args.process_path),
+            subtitle_path=args.subtitle_path,
+            room_id=args.room_id,
+        )
+        return
+    if args.ass_from_json:
+        ass_from_json_cli(
+            cfg_path,
+            Path(args.ass_from_json),
+            room_id=args.room_id,
+        )
+        return
+    if args.burn_path:
+        burn_subtitle_from_cli(
+            cfg_path,
+            Path(args.burn_path),
             subtitle_path=args.subtitle_path,
             room_id=args.room_id,
         )
@@ -230,6 +254,129 @@ def manual_upload_from_cli(
     if not success:
         raise SystemExit("手动上传失败")
     logging.info("Manual upload finished successfully")
+
+
+def ass_from_json_cli(
+    config_path: Path,
+    json_source: Path,
+    room_id: str | None = None,
+) -> None:
+    logging.info("Generate ASS from jsonl start: config=%s source=%s", config_path, json_source)
+    if not json_source.exists():
+        raise SystemExit(f"指定的 jsonl/目录不存在: {json_source}")
+    if json_source.is_dir():
+        jsonl_path = json_source / "danmu.jsonl"
+    else:
+        jsonl_path = json_source
+    if jsonl_path.suffix.lower() != ".jsonl":
+        raise SystemExit("字幕源必须是 .jsonl 文件，或包含 danmu.jsonl 的目录")
+    if not jsonl_path.exists():
+        raise SystemExit(f"未找到 jsonl 文件: {jsonl_path}")
+
+    app_config = load_config(config_path, refresh_credentials=False)
+    configure_logging(app_config.root.logger)
+
+    slug = jsonl_path.parent.name
+    inferred_room_id = room_id or _infer_room_id_from_slug(slug) or _infer_room_id_from_path(jsonl_path)
+    final_room_id = inferred_room_id or "manual"
+    start_time = _infer_start_time_from_slug(slug, jsonl_path)
+
+    paths = RecordingPaths(app_config.root.data_path, final_room_id, start_time)
+    paths.ensure_session_dirs()
+    target_json = paths.danmu_json_path
+    try:
+        same_json = jsonl_path.resolve() == target_json.resolve()
+    except OSError:
+        same_json = False
+    if not same_json:
+        shutil.copy2(jsonl_path, target_json)
+
+    ass_path = paths.danmu_ass_path
+    success = jsonl_to_ass(target_json, ass_path, start_time, app_config.root.danmu_ass)
+    if not success:
+        raise SystemExit("jsonl 转 ass 失败")
+    logging.info("ASS 生成完成 -> %s", ass_path)
+    print(f"[INFO] ASS 已生成 -> {ass_path}")
+
+
+def burn_subtitle_from_cli(
+    config_path: Path,
+    video_path: Path,
+    subtitle_path: str | None = None,
+    room_id: str | None = None,
+) -> None:
+    logging.info(
+        "Manual burn subtitle start: config=%s video=%s subtitle=%s",
+        config_path,
+        video_path,
+        subtitle_path or "-",
+    )
+    if not video_path.exists():
+        raise SystemExit(f"指定的视频文件不存在: {video_path}")
+    app_config = load_config(config_path, refresh_credentials=False)
+    configure_logging(app_config.root.logger)
+
+    slug = _strip_merged_suffix(video_path.stem)
+    inferred_room_id = room_id or _infer_room_id_from_slug(slug) or _infer_room_id_from_path(video_path)
+    final_room_id = inferred_room_id or "manual"
+    start_time = _infer_start_time_from_slug(slug, video_path)
+
+    paths = RecordingPaths(app_config.root.data_path, final_room_id, start_time)
+    paths.ensure_session_dirs()
+    target_merged = paths.merged_file
+    try:
+        if video_path.resolve() != target_merged.resolve():
+            shutil.copy2(video_path, target_merged)
+    except OSError:
+        shutil.copy2(video_path, target_merged)
+
+    danmu_json = paths.danmu_json_path
+    danmu_ass = paths.danmu_ass_path
+
+    if subtitle_path:
+        subtitle = Path(subtitle_path)
+        if not subtitle.exists():
+            raise SystemExit(f"指定的字幕文件不存在: {subtitle}")
+        suffix = subtitle.suffix.lower()
+        try:
+            same_json = subtitle.resolve() == danmu_json.resolve()
+            same_ass = subtitle.resolve() == danmu_ass.resolve()
+        except OSError:
+            same_json = same_ass = False
+        if suffix == ".jsonl":
+            if not same_json:
+                shutil.copy2(subtitle, danmu_json)
+        elif suffix == ".ass":
+            if not same_ass:
+                shutil.copy2(subtitle, danmu_ass)
+        else:
+            raise SystemExit("字幕文件仅支持 .jsonl 或 .ass")
+
+    if not danmu_ass.exists():
+        if not danmu_json.exists():
+            raise SystemExit("未找到可用的字幕文件，请通过 --subtitle-path 提供 .jsonl 或 .ass")
+        if not jsonl_to_ass(danmu_json, danmu_ass, paths.start, app_config.root.danmu_ass):
+            raise SystemExit("字幕 jsonl 转 ass 失败，终止压制")
+
+    room_config = next(
+        (room for room in app_config.rooms if str(room.room_id) == str(final_room_id)),
+        None,
+    )
+    recorder_cfg = room_config.recorder if room_config else RecorderConfig(keep_raw_record=True)
+
+    processor = RecordingProcessor(
+        paths,
+        recorder_cfg,
+        app_config.root.danmu_ass,
+        app_config.root.ffmpeg_path,
+        app_config.root.ffprobe_path,
+    )
+    try:
+        processor._apply_subtitles()
+    finally:
+        processor.close()
+    logging.info("字幕压制完成，输出文件 %s", paths.merged_file)
+    print(f"[INFO] 字幕已压制 -> {paths.merged_file}")
 
 
 def manual_process_from_cli(

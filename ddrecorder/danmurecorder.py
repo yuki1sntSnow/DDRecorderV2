@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
+import re
 from pathlib import Path
 from typing import Iterable, Tuple
 
@@ -17,6 +18,7 @@ from biliup.plugins import wbi  # type: ignore[import]
 from .logging import get_stage_logger
 
 _BILIBILI_HEADER_LOCK = threading.Lock()
+_EMOJI_PATTERN = re.compile(r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF]")
 
 
 def refresh_wbi_key(cookie: str | None = None, logger: logging.Logger | None = None) -> None:
@@ -199,6 +201,9 @@ class DanmuRecorder(threading.Thread):
         for msg in messages:
             if msg.get("msg_type") != "danmaku":
                 continue
+            text = msg.get("content", "")
+            if _EMOJI_PATTERN.search(text):
+                continue
             uid = str(msg.get("uid", ""))
             uname = msg.get("name", "")
             extracted_uid, extracted_name = self._extract_user_from_raw(msg)
@@ -208,7 +213,7 @@ class DanmuRecorder(threading.Thread):
                 uname = extracted_name
             record = {
                 "type": "danmaku",
-                "text": msg.get("content", ""),
+                "text": text,
                 "time": now_ms,
                 "uid": uid,
                 "uname": uname,

@@ -288,20 +288,18 @@ class RecordingProcessor:
             "-y",
             "-fflags",
             "+discardcorrupt",
+            "-err_detect",
+            "ignore_err",
             "-i",
             str(fragment),
-            "-c",
+            "-c:v",
             "copy",
+            "-c:a",
+            "aac",
         ]
         if bsf:
             cmd += ["-bsf:v", bsf]
-        cmd += [
-            "-acodec",
-            "aac",
-            "-f",
-            "mpegts",
-            str(ts_path),
-        ]
+        cmd += ["-f", "mpegts", str(ts_path)]
         return cmd
 
     def _detect_video_codec(self, fragment: Path) -> str | None:

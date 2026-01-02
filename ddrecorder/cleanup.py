@@ -95,7 +95,7 @@ def _purge_path(target: Path, threshold: float, writer) -> Tuple[int, int]:
                 continue
     return files_removed, dirs_removed
 
-
+        
 def _count_entries(target: Path) -> Tuple[int, int]:
     files = 0
     dirs = 0
