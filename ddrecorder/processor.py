@@ -72,6 +72,8 @@ class RecordingProcessor:
         )
         os.environ["FFMPEG_BINARY"] = self.ffmpeg_bin
         os.environ["FFPROBE_BINARY"] = self.ffprobe_bin
+        # Detect hardware encoder (NVENC/AMF) once for this processor.
+        self.hw_encoder = self._detect_hw_encoder()
 
     def run(self, keep_ts: bool = False) -> ProcessResult | None:
         self.process_logger.info("开始处理录制片段，目录 %s", self.paths.records_dir)
@@ -257,6 +259,42 @@ class RecordingProcessor:
         except OSError:
             self.process_logger.warning("无法准备字幕压制临时文件，跳过字幕压制")
             return
+        encoder = "libx264"
+        target_bps, max_bps, buf_bps = self._estimate_bitrate(temp_file)
+        # 默认压字幕使用更省体积的参数，并限制峰值码率，目标体积尽量贴近源（约 1.0~1.2 倍）
+        encoder_args = [
+            "-preset", "medium",
+            "-crf", "27",
+            "-b:v", str(target_bps),
+            "-maxrate", str(max_bps),
+            "-bufsize", str(buf_bps),
+            "-pix_fmt", "yuv420p",
+        ]
+        if getattr(self, "hw_encoder", None):
+            if self.hw_encoder == "h264_nvenc":
+                encoder = "h264_nvenc"
+                encoder_args = [
+                    "-preset", "p4",
+                    "-rc:v", "vbr_hq",
+                    "-cq", "29",
+                    "-b:v", str(target_bps),
+                    "-maxrate", str(max_bps),
+                    "-bufsize", str(buf_bps),
+                    "-pix_fmt", "yuv420p",
+                ]
+                self.process_logger.info("检测到硬件编码器 h264_nvenc，字幕压制将使用硬件加速")
+            elif self.hw_encoder == "h264_amf":
+                encoder = "h264_amf"
+                encoder_args = [
+                    "-usage", "transcoding",
+                    "-quality", "quality",
+                    "-rc", "vbr",
+                    "-b:v", str(target_bps),
+                    "-maxrate", str(max_bps),
+                    "-bufsize", str(buf_bps),
+                    "-pix_fmt", "yuv420p",
+                ]
+                self.process_logger.info("检测到硬件编码器 h264_amf，字幕压制将使用硬件加速")
         cmd = [
             self.ffmpeg_bin,
             "-y",
@@ -265,13 +303,10 @@ class RecordingProcessor:
             "-vf",
             f"ass={ass_path}",
             "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
+            encoder,
+        ]
+        cmd += encoder_args
+        cmd += [
             "-c:a",
             "copy",
             "-movflags",
@@ -319,3 +354,57 @@ class RecordingProcessor:
         if not video:
             return None
         return (video.get("codec_name") or "").lower()
+
+    def _detect_hw_encoder(self) -> str | None:
+        """
+        Detect optional hardware encoder for hardsub stage.
+        - Env FFMPEG_HWACCEL=nvenc|amf|none 可强制或关闭。
+        - 自动探测 ffmpeg -encoders，优先 NVENC，其次 AMF。
+        返回 encoder_name 或 None 表示用 CPU libx264。
+        """
+        override = os.environ.get("FFMPEG_HWACCEL", "").lower()
+        if override == "none":
+            return None
+
+        candidates: list[str] = []
+        if override in ("nvenc", "nvidia"):
+            candidates.append("h264_nvenc")
+        elif override in ("amf", "amd"):
+            candidates.append("h264_amf")
+        elif override:
+            return None
+        else:
+            try:
+                encoders = subprocess.run(
+                    [self.ffmpeg_bin, "-hide_banner", "-encoders"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout
+            except Exception:
+                return None
+            if "h264_nvenc" in encoders:
+                candidates.append("h264_nvenc")
+            if "h264_amf" in encoders:
+                candidates.append("h264_amf")
+        return candidates[0] if candidates else None
+
+    def _estimate_bitrate(self, source: Path) -> tuple[int, int, int]:
+        """
+        Estimate target/maxrate/bufsize based on source video bitrate.
+        Aim for ~1.0-1.2x of source size with modest ceilings.
+        """
+        target_bps = 2_000_000
+        max_bps = 3_000_000
+        try:
+            probe = ffmpeg.probe(str(source))
+            streams = probe.get("streams") or []
+            video = next((s for s in streams if s.get("codec_type") == "video"), None)
+            if video and video.get("bit_rate"):
+                src_bps = int(float(video["bit_rate"]))
+                target_bps = max(1_000_000, int(src_bps * 1.0))
+                max_bps = max(int(target_bps * 1.2), target_bps + 300_000)
+        except Exception:
+            self.process_logger.debug("估算源码率失败，使用默认目标码率", exc_info=True)
+        buf_bps = max_bps * 2
+        return target_bps, max_bps, buf_bps
