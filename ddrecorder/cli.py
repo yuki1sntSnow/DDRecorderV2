@@ -10,16 +10,17 @@ import sys
 import time
 from pathlib import Path
 
-from .cleanup import CleanupScheduler, perform_cleanup
+from .cleanup import CleanupScheduler, cleanup_directories
 from .config import AppConfig, RecorderConfig, RoomConfig, load_config
-from .danmaku_ass import jsonl_to_ass
 from .logging import configure_logging
 from .paths import RecordingPaths
 from .processor import RecordingProcessor
-from .runner import RunnerController
+from .recorder import LiveRecorder
+from .runner import RunnerController, build_danmu_headers
 from .uploader import BiliUploader
 from .live.bilibili import BiliLiveRoom
 from .utils import clear_upload_failed, mark_upload_failed
+from .danmurecorder import DanmuRecorder
 
 import datetime as dt
 
@@ -27,77 +28,103 @@ _SLUG_TS_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="DDRecorderV2 - B 站直播录播工具")
-    parser.add_argument(
+    # 公共参数：允许在子命令前或后使用 -c/--config
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
         "-c",
         "--config",
         default="config/config.json",
         help="配置文件路径 (默认: config/config.json)",
     )
-    parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="只执行一次清理任务后退出",
-    )
-    parser.add_argument(
+
+    parser = argparse.ArgumentParser(description="DDRecorderV2 - B 站直播录播工具", parents=[common])
+    # 默认 command=run 以兼容旧的 systemd 调用方式（不加子命令时自动执行 run）。
+    parser.set_defaults(command="run", cleanup_interval=24.0, cleanup_retention=7)
+    subparsers = parser.add_subparsers(dest="command")
+
+    run_parser = subparsers.add_parser("run", help="自动模式：轮询录制、处理、上传", parents=[common])
+    run_parser.add_argument(
         "--cleanup-interval",
         type=float,
         default=24.0,
         help="后台定期清理的间隔（小时），0 表示不启用",
     )
-    parser.add_argument(
+    run_parser.add_argument(
         "--cleanup-retention",
         type=int,
         default=7,
         help="保留录制/日志的天数，清理任务会删除更早的文件",
     )
-    parser.add_argument(
-        "--run-tests",
-        action="store_true",
-        help="运行项目附带的 pytest 测试后退出",
+
+    record_parser = subparsers.add_parser("record", help="手动录制指定房间，可选限制时长", parents=[common])
+    record_parser.add_argument(
+        "--room-id",
+        required=True,
+        help="房间号（必填）",
     )
-    parser.add_argument(
-        "--upload-path",
-        help="手动上传指定目录下的 mp4 分段（路径为 splits 目录）",
+    record_parser.add_argument(
+        "--duration",
+        type=int,
+        help="最大录制时长（秒），留空则直到下播",
     )
-    parser.add_argument(
-        "--process-path",
-        help="手动处理/合并指定 flv 文件或目录（自动生成 merged mp4，可配合 --subtitle-path）",
+
+    process_parser = subparsers.add_parser("process", help="处理/合并 flv 片段，可选字幕", parents=[common])
+    process_parser.add_argument(
+        "--source",
+        required=True,
+        help="flv 文件或包含 flv 的目录",
     )
-    parser.add_argument(
-        "--split-path",
-        help="手动切分已合并的 mp4 文件（路径为 *_merged.mp4 或包含该文件的目录）",
+    process_parser.add_argument(
+        "--subtitle-path",
+        help="可选字幕文件（.jsonl 或 .ass）",
     )
-    parser.add_argument(
+    process_parser.add_argument(
+        "--room-id",
+        help="房间号，缺省从路径推断",
+    )
+
+    split_parser = subparsers.add_parser("split", help="按间隔切分 merged.mp4", parents=[common])
+    split_parser.add_argument(
+        "--target",
+        required=True,
+        help="*_merged.mp4 文件或包含该文件的目录",
+    )
+    split_parser.add_argument(
         "--split-interval",
         type=int,
-        help="配合 --split-path 指定分段长度（秒），缺省读取配置文件",
+        help="分段长度（秒），缺省读取配置",
     )
-    parser.add_argument(
-        "--ass-from-json",
-        help="从指定 jsonl 生成 ass 弹幕文件（支持文件或包含 danmu.jsonl 的目录）",
-    )
-    parser.add_argument(
-        "--burn-path",
-        help="对已有 merged/nosub mp4 重新压制弹幕（可配合 --subtitle-path）",
-    )
-    parser.add_argument(
+    split_parser.add_argument(
         "--room-id",
-        help="配合 --upload-path/--split-path/--process-path 指定房间号；缺省尝试从路径推断",
+        help="房间号，缺省从路径推断",
     )
-    parser.add_argument(
-        "--subtitle-path",
-        help="配合 --process-path 指定弹幕字幕（支持 .jsonl 或 .ass）",
+
+    upload_parser = subparsers.add_parser("upload", help="上传 mp4 分段", parents=[common])
+    upload_parser.add_argument(
+        "--path",
+        required=True,
+        help="分段所在目录或具体 mp4 路径",
     )
-    parser.add_argument(
-        "--dump-credentials",
-        action="store_true",
-        help="登录并输出账号 Token/Cookies 到 config 目录下的 cookies.json 后退出（使用 root.account）",
+    upload_parser.add_argument(
+        "--room-id",
+        help="房间号，缺省从路径推断",
     )
-    parser.add_argument(
+
+    clean_parser = subparsers.add_parser("clean", help="按保留天数清理录制文件与日志", parents=[common])
+    clean_parser.add_argument(
+        "--retention",
+        type=int,
+        default=7,
+        help="保留天数（默认 7）",
+    )
+
+    dump_parser = subparsers.add_parser("dump-creds", help="登录并输出账号 Token/Cookies", parents=[common])
+    dump_parser.add_argument(
         "--account",
-        help="配合 --dump-credentials 指定 root.account 下的名称，缺省取第一个",
+        help="root.account 下的名称，缺省取第一个",
     )
+
+    subparsers.add_parser("test", help="运行项目附带的 pytest 测试", parents=[common])
     return parser.parse_args(argv)
 
 
@@ -144,48 +171,39 @@ def run(config_path: str, cleanup_interval: float = 0.0, cleanup_retention: int 
 
 def main() -> None:
     args = parse_args()
+    if args.command is None:
+        args.command = "run"
+        args.cleanup_interval = getattr(args, "cleanup_interval", 24.0)
+        args.cleanup_retention = getattr(args, "cleanup_retention", 7)
     cfg_path = Path(args.config).resolve()
-    if args.run_tests:
-        run_tests()
-        return
-    if args.dump_credentials:
-        dump_and_exit(cfg_path, args.account)
-        return
-    if args.process_path:
+    command = args.command
+    if command == "run":
+        run(str(cfg_path), cleanup_interval=args.cleanup_interval, cleanup_retention=args.cleanup_retention)
+    elif command == "record":
+        manual_record_from_cli(cfg_path, args.room_id, args.duration)
+    elif command == "process":
         manual_process_from_cli(
             cfg_path,
-            Path(args.process_path),
+            Path(args.source),
             subtitle_path=args.subtitle_path,
             room_id=args.room_id,
         )
-        return
-    if args.ass_from_json:
-        ass_from_json_cli(
-            cfg_path,
-            Path(args.ass_from_json),
-            room_id=args.room_id,
-        )
-        return
-    if args.burn_path:
-        burn_subtitle_from_cli(
-            cfg_path,
-            Path(args.burn_path),
-            subtitle_path=args.subtitle_path,
-            room_id=args.room_id,
-        )
-        return
-    if args.split_path:
+    elif command == "split":
         manual_split_from_cli(
-            cfg_path, Path(args.split_path), room_id=args.room_id, split_interval=args.split_interval
+            cfg_path, Path(args.target), room_id=args.room_id, split_interval=args.split_interval
         )
-        return
-    if args.upload_path:
-        manual_upload_from_cli(cfg_path, Path(args.upload_path), room_id=args.room_id)
-        return
-    if args.clean:
-        perform_cleanup(cfg_path, args.cleanup_retention)
-        return
-    run(str(cfg_path), cleanup_interval=args.cleanup_interval, cleanup_retention=args.cleanup_retention)
+    elif command == "upload":
+        manual_upload_from_cli(cfg_path, Path(args.path), room_id=args.room_id)
+    elif command == "clean":
+        app_config = load_config(cfg_path)
+        configure_logging(app_config.root.logger)
+        cleanup_directories(app_config, args.retention)
+    elif command == "dump-creds":
+        dump_and_exit(cfg_path, args.account)
+    elif command == "test":
+        run_tests()
+    else:
+        raise SystemExit(f"未知命令: {command}")
 
 
 def run_tests() -> None:
@@ -202,6 +220,49 @@ def dump_and_exit(config_path: Path, account: str | None) -> None:
     out_path = dump_credentials(config_path, account_name=account)
     logging.info("账户凭据已输出到 %s", out_path)
     print(f"[INFO] 凭据已保存到 {out_path}")
+
+
+def manual_record_from_cli(config_path: Path, room_id: str, duration: int | None) -> None:
+    if duration is not None and duration <= 0:
+        duration = None
+    app_config = load_config(config_path)
+    configure_logging(app_config.root.logger)
+    room_config = _get_room_config(app_config, room_id)
+    room = BiliLiveRoom(room_config.room_id, headers=app_config.root.request_header)
+    try:
+        room.refresh()
+    except Exception:
+        raise SystemExit("刷新房间状态失败，无法开始录制")
+    if not room.is_live:
+        raise SystemExit(f"房间 {room_id} 未开播，当前不可录制")
+
+    session_start = dt.datetime.now()
+    paths = RecordingPaths(app_config.root.data_path, room_config.room_id, session_start)
+    recorder = LiveRecorder(room, paths, room_config.recorder, app_config.root)
+    danmu_recorder = None
+    if room_config.recorder.enable_danmu:
+        try:
+            danmu_headers = build_danmu_headers(app_config.root.request_header, room_config.uploader.account)
+            danmu_recorder = DanmuRecorder(
+                room_id=room_config.room_id,
+                slug=paths.slug,
+                headers=danmu_headers,
+                output_dir=paths.danmu_dir,
+                logger=logging.getLogger("ddrecorder.record"),
+            )
+            danmu_recorder.start()
+        except Exception:
+            danmu_recorder = None
+            logging.error("弹幕录制器启动失败 room=%s", room_config.room_id, exc_info=True)
+
+    result = recorder.record(max_duration=duration)
+    if danmu_recorder:
+        danmu_recorder.stop()
+        danmu_recorder.join(timeout=5)
+    if not result:
+        raise SystemExit("录制失败，无有效片段")
+    logging.info("录制完成，片段数=%s，目录=%s", len(result.fragments), result.record_dir)
+    print(f"[INFO] 录制完成，生成 {len(result.fragments)} 个片段 -> {result.record_dir}")
 
 
 def manual_split_from_cli(
@@ -254,129 +315,6 @@ def manual_upload_from_cli(
     if not success:
         raise SystemExit("手动上传失败")
     logging.info("Manual upload finished successfully")
-
-
-def ass_from_json_cli(
-    config_path: Path,
-    json_source: Path,
-    room_id: str | None = None,
-) -> None:
-    logging.info("Generate ASS from jsonl start: config=%s source=%s", config_path, json_source)
-    if not json_source.exists():
-        raise SystemExit(f"指定的 jsonl/目录不存在: {json_source}")
-    if json_source.is_dir():
-        jsonl_path = json_source / "danmu.jsonl"
-    else:
-        jsonl_path = json_source
-    if jsonl_path.suffix.lower() != ".jsonl":
-        raise SystemExit("字幕源必须是 .jsonl 文件，或包含 danmu.jsonl 的目录")
-    if not jsonl_path.exists():
-        raise SystemExit(f"未找到 jsonl 文件: {jsonl_path}")
-
-    app_config = load_config(config_path, refresh_credentials=False)
-    configure_logging(app_config.root.logger)
-
-    slug = jsonl_path.parent.name
-    inferred_room_id = room_id or _infer_room_id_from_slug(slug) or _infer_room_id_from_path(jsonl_path)
-    final_room_id = inferred_room_id or "manual"
-    start_time = _infer_start_time_from_slug(slug, jsonl_path)
-
-    paths = RecordingPaths(app_config.root.data_path, final_room_id, start_time)
-    paths.ensure_session_dirs()
-    target_json = paths.danmu_json_path
-    try:
-        same_json = jsonl_path.resolve() == target_json.resolve()
-    except OSError:
-        same_json = False
-    if not same_json:
-        shutil.copy2(jsonl_path, target_json)
-
-    ass_path = paths.danmu_ass_path
-    success = jsonl_to_ass(target_json, ass_path, start_time, app_config.root.danmu_ass)
-    if not success:
-        raise SystemExit("jsonl 转 ass 失败")
-    logging.info("ASS 生成完成 -> %s", ass_path)
-    print(f"[INFO] ASS 已生成 -> {ass_path}")
-
-
-def burn_subtitle_from_cli(
-    config_path: Path,
-    video_path: Path,
-    subtitle_path: str | None = None,
-    room_id: str | None = None,
-) -> None:
-    logging.info(
-        "Manual burn subtitle start: config=%s video=%s subtitle=%s",
-        config_path,
-        video_path,
-        subtitle_path or "-",
-    )
-    if not video_path.exists():
-        raise SystemExit(f"指定的视频文件不存在: {video_path}")
-    app_config = load_config(config_path, refresh_credentials=False)
-    configure_logging(app_config.root.logger)
-
-    slug = _strip_merged_suffix(video_path.stem)
-    inferred_room_id = room_id or _infer_room_id_from_slug(slug) or _infer_room_id_from_path(video_path)
-    final_room_id = inferred_room_id or "manual"
-    start_time = _infer_start_time_from_slug(slug, video_path)
-
-    paths = RecordingPaths(app_config.root.data_path, final_room_id, start_time)
-    paths.ensure_session_dirs()
-    target_merged = paths.merged_file
-    try:
-        if video_path.resolve() != target_merged.resolve():
-            shutil.copy2(video_path, target_merged)
-    except OSError:
-        shutil.copy2(video_path, target_merged)
-
-    danmu_json = paths.danmu_json_path
-    danmu_ass = paths.danmu_ass_path
-
-    if subtitle_path:
-        subtitle = Path(subtitle_path)
-        if not subtitle.exists():
-            raise SystemExit(f"指定的字幕文件不存在: {subtitle}")
-        suffix = subtitle.suffix.lower()
-        try:
-            same_json = subtitle.resolve() == danmu_json.resolve()
-            same_ass = subtitle.resolve() == danmu_ass.resolve()
-        except OSError:
-            same_json = same_ass = False
-        if suffix == ".jsonl":
-            if not same_json:
-                shutil.copy2(subtitle, danmu_json)
-        elif suffix == ".ass":
-            if not same_ass:
-                shutil.copy2(subtitle, danmu_ass)
-        else:
-            raise SystemExit("字幕文件仅支持 .jsonl 或 .ass")
-
-    if not danmu_ass.exists():
-        if not danmu_json.exists():
-            raise SystemExit("未找到可用的字幕文件，请通过 --subtitle-path 提供 .jsonl 或 .ass")
-        if not jsonl_to_ass(danmu_json, danmu_ass, paths.start, app_config.root.danmu_ass):
-            raise SystemExit("字幕 jsonl 转 ass 失败，终止压制")
-
-    room_config = next(
-        (room for room in app_config.rooms if str(room.room_id) == str(final_room_id)),
-        None,
-    )
-    recorder_cfg = room_config.recorder if room_config else RecorderConfig(keep_raw_record=True)
-
-    processor = RecordingProcessor(
-        paths,
-        recorder_cfg,
-        app_config.root.danmu_ass,
-        app_config.root.ffmpeg_path,
-        app_config.root.ffprobe_path,
-    )
-    try:
-        processor._apply_subtitles()
-    finally:
-        processor.close()
-    logging.info("字幕压制完成，输出文件 %s", paths.merged_file)
-    print(f"[INFO] 字幕已压制 -> {paths.merged_file}")
 
 
 def manual_process_from_cli(
@@ -438,7 +376,12 @@ def manual_process_from_cli(
         (room for room in app_config.rooms if str(room.room_id) == str(final_room_id)),
         None,
     )
-    recorder_cfg = room_config.recorder if room_config else RecorderConfig(keep_raw_record=True)
+    # 手动处理强制保留原始 flv，避免因配置 keep_raw_record=False 删除源文件
+    base_recorder_cfg = room_config.recorder if room_config else RecorderConfig(keep_raw_record=True)
+    recorder_cfg = RecorderConfig(
+        keep_raw_record=True,
+        enable_danmu=base_recorder_cfg.enable_danmu,
+    )
     processor = RecordingProcessor(
         paths,
         recorder_cfg,
@@ -447,7 +390,8 @@ def manual_process_from_cli(
         app_config.root.ffprobe_path,
     )
     try:
-        result = processor.run(keep_ts=True)
+        # 手动处理默认不保留 TS 以节省空间
+        result = processor.run(keep_ts=False)
     finally:
         processor.close()
     if not result:

@@ -1,43 +1,48 @@
 DDRecorderV2
 ============
 
-轻量的 B 站直播录播守护：检测 ➜ 录制（含弹幕）➜ 合并/分段 ➜ 上传。即开即用、可观测、易运维。
-
-> 致谢 **AsaChiri**（DDRecorder） 的原始开源版本；V2 在其基础上精简重构并持续维护。
-
----
-
-## 特性
-
-- 多线程 Runner：房间独立调度，自动检测开播、录制、处理、上传。
-- 弹幕支持：实时采集、生成 ASS，合并时可直接压制到 MP4。
-- 内置清理：默认 24h 清理，保留 7 天，失败目录自动打标跳过。
-- 观测友好：主日志 + detect/record/process/upload 阶段日志；FFmpeg 日志默认精简。
-- 运维友好：单入口 `python -m ddrecorder`，支持手动上传、自检、一次性清理。
+轻量的 B 站直播录播守护：检测 ➜ 录制（含弹幕）➜ 合并/分段 ➜ 上传。即开即用、可观测、易运维。  
+致谢 **AsaChiri**（DDRecorder）开源版本，本项目在其基础上精简重构并持续维护。
 
 ---
+
+## 核心特性
+- 多线程 Runner：房间独立调度，自动检测开播、录制、处理、切分、上传。
+- 弹幕录制：可选同步采集弹幕并压制到合并文件。
+- 自动重试：录制/上传内置重试与失败标记；失败不会删除已有文件。
+- 清理守护：默认 24h 清理一次，保留 7 天，带失败标记的目录跳过。
+- 观测友好：主日志 + detect/record/process/upload 分阶段日志，FFmpeg 独立日志。
 
 ## 快速开始
-
 ```bash
 git clone https://github.com/yuki1sntSnow/DDRecorderV2.git
 cd DDRecorderV2
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -m ddrecorder                      # 使用 config/config.json 守护运行
-python -m ddrecorder --clean              # 只执行一次清理
-python -m ddrecorder --split-path data/merged/<room>_<time>_merged.mp4 [--split-interval 3600] [--room-id <room>]
-python -m ddrecorder --upload-path data/splits/<room>_<time> [--room-id <room>]
+
+# 守护运行（默认读取 config/config.json）
+python -m ddrecorder run -c config/config.json
+# 手动录制（可选时长，遵循配置的 enable_danmu）
+python -m ddrecorder record -c config/config.json --room-id 1234 --duration 300
+# 处理/合并 flv 目录或文件（可带字幕）
+python -m ddrecorder process -c config/config.json --source path/to/flv_dir --room-id 1234 --subtitle-path path/to/danmu.jsonl
+# 切分 / 上传 / 清理
+python -m ddrecorder split  -c config/config.json --target path/to/*_merged.mp4 --split-interval 1800
+python -m ddrecorder upload -c config/config.json --path path/to/splits_dir --room-id 1234
+python -m ddrecorder clean  -c config/config.json --retention 7
 ```
 
-常用参数：`--config` 指定配置；`--cleanup-interval/--cleanup-retention` 调整清理；`--run-tests` 运行 pytest。
+### CLI 子命令
+- `run`：自动流水线，可附带 `--cleanup-interval` / `--cleanup-retention`。
+- `record`：手动录制指定房间，支持 `--duration`。
+- `process`：转封装+合并 flv，支持字幕压制。
+- `split`：按间隔切分 merged。
+- `upload`：上传分段目录。
+- `clean`：按天数清理录制数据与日志。
+- `dump-creds`：导出账号 Token/Cookies；`test`：运行 pytest。
 
----
-
-## 配置示例
-
-编辑 `config/config.json`（可放项目根或 `config/` 下）：
-
+## 配置速览
+`config/config.json` 示例：
 ```json
 {
   "root": {
@@ -46,25 +51,8 @@ python -m ddrecorder --upload-path data/splits/<room>_<time> [--room-id <room>]
     "data_path": "./",
     "logger": { "log_path": "./log", "log_level": "INFO" },
     "uploader": { "lines": "AUTO" },
-    "danmu_ass": {
-      "font": "Noto Sans CJK SC",
-      "font_size": 45,
-      "duration": 6,
-      "row_count": 12,
-      "line_height": 40,
-      "margin_top": 60,
-      "scroll_end": -200
-    },
-    "account": {
-      "default": {
-        "username": "YOUR_USERNAME",
-        "password": "YOUR_PASSWORD",
-        "region": "86",
-        "access_token": "",
-        "refresh_token": "",
-        "cookies": {}
-      }
-    }
+    "danmu_ass": { "font": "Noto Sans CJK SC", "font_size": 45 },
+    "account": { "default": { "username": "", "password": "", "cookies": {} } }
   },
   "spec": [
     {
@@ -85,38 +73,33 @@ python -m ddrecorder --upload-path data/splits/<room>_<time> [--room-id <room>]
   ]
 }
 ```
+字段说明要点：
+- `root.check_interval` / `print_interval`：轮询与状态打印间隔（秒）。
+- `root.data_path`：数据根目录，自动创建 `data/records|merged|splits|danmu|merge_confs`。
+- `root.logger.log_path`：日志目录。
+- `root.danmu_ass.*`：弹幕转 ASS 样式。
+- `root.account.*`：账号列表（可引用 cookies.json）。
+- `spec[].recorder.keep_raw_record` / `enable_danmu`：是否保留原始 flv、是否录制弹幕。
+- `spec[].uploader.record.*`: 上传开关、切分间隔、稿件模板、上传后是否保留文件。
 
-- `enable_danmu`: 采集弹幕并生成 ASS，合并时自动压制到视频。
-- `keep_raw_record` / `keep_record_after_upload`: 控制是否保留 flv/mp4。
-- 账号可配置多份：在 `root.account.<name>` 定义，在 `spec[].uploader.account` 填名称复用。
-- 字体：Linux 默认使用 `Noto Sans CJK SC`，如需 Emoji 建议安装 `fonts-noto-cjk`、`fonts-noto-color-emoji` 并按需修改 `danmu_ass.font`。
+更多字段见 `config/config.example.json`。
 
-更详细字段说明见 `config/config.example.json`。
-
----
-
-## 日志与观测
-
+## 日志与目录
 - 主日志：`log/DDRecorder_*.log`
-- 阶段：`log/detect/detect.log`, `log/record/record.log`, `log/process/process.log`, `log/upload/upload.log`（时间戳+线程+文件行号）
-- FFmpeg：默认仅错误/警告，文件在 `log/ffmpeg/<room>_*.log`；需要详细进度设 `DDRECORDER_FFMPEG_VERBOSE=1`
-- 清理：内置定时清理（默认 24h/保留 7 天），可用 `--clean` 手动触发
-- 凭据导出：`python -m ddrecorder --dump-credentials [--config <path>] [--account <name>]` 将 Token/Cookies 保存到配置目录的 `cookies.json`（请确保 root.account 中已填写用户名/密码或可用的登录方式）
+- 阶段日志：`log/detect/record/process/upload/*.log`
+- FFmpeg：`log/ffmpeg/ffmpeg_<slug>_*.log`
+- 数据：`data/records` (flv) / `data/merged` (合并 mp4) / `data/splits` (分段) / `data/danmu` (弹幕 jsonl/ass) / `data/merge_confs` (concat 列表)
 
-运维：推荐配合 systemd；`journalctl -u ddrecorder -f` 实时查看。
+## 常见说明
+- 手动/自动流程遇错会保留已生成文件（除“完全无片段”的录制），便于排查。
+- 默认转封装/合并启用 `aac_adtstoasc`、`faststart`；字幕压制强制 `yuv420p`，提高兼容性。
+- 清理任务仅按天数删除旧文件，带上传失败标记的目录跳过。
 
----
+## 贡献与 Roadmap
+- 运行 `python -m ddrecorder test -c config/config.json` 可执行现有测试。
+- Roadmap：
+  - 规避版权方案：特定区域马赛克或动态切片
+  - 弹幕 NLP / 过滤
+  - 弹幕用户名去马赛克
 
-## 贡献与反馈
-
-- 运行 `pytest` 查看现有用例覆盖配置、录制、处理、上传、清理等。
-- 遇到问题或有需求，欢迎提交 Issue / PR。
-
-Roadmap:
-- [ ] **规避版权方案**：马赛克特定区域，或非固定数值切片分割
-- [ ] **弹幕 NLP / 过滤**：基于结构化弹幕做语义分析/屏蔽
-- [ ] **弹幕用户名去马赛克**：提升弹幕用户名还原能力（对接更完整字段或请求）
-
-欢迎提出希望支持的场景 🚀
-
-> 本文档由 AI 辅助生成。
+欢迎反馈和 PR，提出希望支持的场景 🚀

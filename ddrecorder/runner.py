@@ -161,10 +161,11 @@ class RoomRunner(threading.Thread):
                     )
                     continue
 
+                cleanup_after_upload = not record_cfg.keep_record_after_upload
                 upload_success = self._upload_with_retry(
                     session_start,
                     splits,
-                    record_cfg.keep_record_after_upload,
+                    cleanup_after_upload,
                     processor,
                 )
                 self.set_state(
@@ -177,7 +178,7 @@ class RoomRunner(threading.Thread):
         self,
         session_start: dt.datetime,
         splits: List[Path],
-        cleanup_on_success: bool,
+        cleanup_after_upload: bool,
         processor: RecordingProcessor,
     ) -> bool:
         """执行一次上传尝试，返回是否成功"""
@@ -191,7 +192,7 @@ class RoomRunner(threading.Thread):
         try:
             upload_ret = uploader.upload_record(session_start, splits)
             if upload_ret is not None:
-                if cleanup_on_success:
+                if cleanup_after_upload:
                     self._cleanup_splits(processor)
                     self.upload_logger.info(
                         "房间 %s 上传成功，已按配置清理分段", self.room_config.room_id
@@ -210,7 +211,7 @@ class RoomRunner(threading.Thread):
         self,
         session_start: dt.datetime,
         splits: List[Path],
-        cleanup_on_success: bool,
+        cleanup_after_upload: bool,
         processor: RecordingProcessor,
         retry_delay: int = 3600,
     ) -> bool:
@@ -220,7 +221,7 @@ class RoomRunner(threading.Thread):
             "房间 %s 开始上传，分段数量 %s", self.room_config.room_id, len(splits)
         )
 
-        if self._do_upload(session_start, splits, cleanup_on_success, processor):
+        if self._do_upload(session_start, splits, cleanup_after_upload, processor):
             clear_upload_failed(processor.paths.splits_dir)
             return True
 
@@ -236,7 +237,7 @@ class RoomRunner(threading.Thread):
         # 重试上传
         self.set_state(RunnerState.UPLOADING)
         self.upload_logger.info("房间 %s 开始重试上传", self.room_config.room_id)
-        if self._do_upload(session_start, splits, cleanup_on_success, processor):
+        if self._do_upload(session_start, splits, cleanup_after_upload, processor):
             clear_upload_failed(processor.paths.splits_dir)
             return True
 

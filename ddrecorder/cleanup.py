@@ -11,10 +11,12 @@ from typing import Tuple, List
 from .config import AppConfig, load_config
 from .utils import UPLOAD_FAILED_MARK, has_upload_failed_marker
 
-DANMU_RETENTION_DAYS = 90
+DANMU_RETENTION_DAYS = 30
 
 
-def cleanup_directories(app_config: AppConfig, retention_days: int = 7, now: float | None = None) -> None:
+def cleanup_directories(
+    app_config: AppConfig, retention_days: int = 7, now: float | None = None
+) -> None:
     now = now or time.time()
     log_dir = app_config.root.logger.path
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -41,14 +43,21 @@ def cleanup_directories(app_config: AppConfig, retention_days: int = 7, now: flo
             writer(
                 f"Cleaned {target} (retention={keep_days}d, removed files={files_removed}, removed dirs={dirs_removed}, remaining files={after_files}, remaining dirs={after_dirs})"
             )
-            logging.info("目录 %s 清理完成，删除文件 %s，删除目录 %s", target, files_removed, dirs_removed)
+            logging.info(
+                "目录 %s 清理完成，删除文件 %s，删除目录 %s",
+                target,
+                files_removed,
+                dirs_removed,
+            )
         writer(
             f"Done cleanup, total removed files={total_files_removed}, dirs={total_dirs_removed}"
         )
     logging.info("本次清理完成")
 
 
-def _build_targets(app_config: AppConfig, default_retention: int) -> List[tuple[Path, int]]:
+def _build_targets(
+    app_config: AppConfig, default_retention: int
+) -> List[tuple[Path, int]]:
     base = app_config.root.data_path / "data"
     log_dir = app_config.root.logger.path
     return [
@@ -95,7 +104,7 @@ def _purge_path(target: Path, threshold: float, writer) -> Tuple[int, int]:
                 continue
     return files_removed, dirs_removed
 
-        
+
 def _count_entries(target: Path) -> Tuple[int, int]:
     files = 0
     dirs = 0
@@ -116,7 +125,12 @@ def _make_log_writer(log) -> callable:
 
 
 class CleanupScheduler(threading.Thread):
-    def __init__(self, app_config: AppConfig, retention_days: int = 7, interval_hours: float = 24.0):
+    def __init__(
+        self,
+        app_config: AppConfig,
+        retention_days: int = 7,
+        interval_hours: float = 24.0,
+    ):
         super().__init__(name="CleanupScheduler", daemon=True)
         self.app_config = app_config
         self.retention_days = retention_days

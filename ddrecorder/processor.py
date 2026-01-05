@@ -172,10 +172,14 @@ class RecordingProcessor:
             str(self.paths.merge_conf_path),
             "-c",
             "copy",
+            "-bsf:a",
+            "aac_adtstoasc",
             "-fflags",
             "+igndts",
             "-avoid_negative_ts",
             "make_zero",
+            "-movflags",
+            "+faststart",
             str(self.paths.merged_file),
         ]
         return self._run_cmd(cmd)
@@ -266,8 +270,12 @@ class RecordingProcessor:
             "veryfast",
             "-crf",
             "23",
+            "-pix_fmt",
+            "yuv420p",
             "-c:a",
             "copy",
+            "-movflags",
+            "+faststart",
             str(self.paths.merged_file),
         ]
         if self._run_cmd(cmd):
@@ -277,12 +285,6 @@ class RecordingProcessor:
             self.process_logger.warning("字幕压制失败，回退到无字幕版本")
 
     def _build_transmux_cmd(self, fragment: Path, ts_path: Path) -> list[str]:
-        codec = self._detect_video_codec(fragment)
-        bsf = None
-        if codec == "h264":
-            bsf = "h264_mp4toannexb"
-        elif codec == "hevc":
-            bsf = "hevc_mp4toannexb"
         cmd = [
             self.ffmpeg_bin,
             "-y",
@@ -296,9 +298,13 @@ class RecordingProcessor:
             "copy",
             "-c:a",
             "aac",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-b:a",
+            "128k",
         ]
-        if bsf:
-            cmd += ["-bsf:v", bsf]
         cmd += ["-f", "mpegts", str(ts_path)]
         return cmd
 
