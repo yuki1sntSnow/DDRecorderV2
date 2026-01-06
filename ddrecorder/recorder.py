@@ -54,9 +54,14 @@ class LiveRecorder:
                 self.room.refresh()
                 continue
             target_path = self.paths.fragment_path()
-            if self._download(stream_urls[0], target_path, stop_at=end_at):
-                fragments.append(target_path)
-                self.logger.info("完成片段 %s", target_path.name)
+            try:
+                if self._download(stream_urls[0], target_path, stop_at=end_at):
+                    fragments.append(target_path)
+                    self.logger.info("完成片段 %s", target_path.name)
+            except OSError:
+                self.logger.critical("录制时发生致命读写错误，终止录制")
+                fragments.clear()
+                break
             self.room.refresh()
         if not fragments:
             self.logger.error("本次录制未生成有效片段")
@@ -93,4 +98,5 @@ class LiveRecorder:
             self.logger.warning("录制时网络异常，稍后重试", exc_info=True)
         except OSError:
             self.logger.error("写入录播文件失败: %s", target_path, exc_info=True)
+            raise
         return False

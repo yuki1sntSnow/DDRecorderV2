@@ -57,7 +57,9 @@ class RecordingProcessor:
         self.danmu_ass = danmu_ass
         slug = self.paths.slug
         self.process_logger = get_stage_logger("process", slug)
-        self.ffmpeg_logfile_hander = open(get_ffmpeg_log_path(slug), mode="a", encoding="utf-8")
+        self.ffmpeg_logfile_hander = open(
+            get_ffmpeg_log_path(slug), mode="a", encoding="utf-8"
+        )
         self._ffmpeg_log_closed = False
         # Resolve ffmpeg/ffprobe binary paths with env override > configured path > system PATH.
         self.ffmpeg_bin = _resolve_ff_bin(
@@ -80,7 +82,9 @@ class RecordingProcessor:
         for attempt in range(1, 4):
             ts_files = self._transmux_fragments()
             if not ts_files:
-                self.process_logger.error("第 %s 次处理失败：没有可用的录制片段", attempt)
+                self.process_logger.error(
+                    "第 %s 次处理失败：没有可用的录制片段", attempt
+                )
                 continue
             if not self._concat(ts_files):
                 self.process_logger.error("第 %s 次 FFmpeg concat 失败", attempt)
@@ -90,7 +94,9 @@ class RecordingProcessor:
             self._apply_subtitles()
             if not self.recorder_cfg.keep_raw_record:
                 self._cleanup_fragments()
-            return ProcessResult(merged_file=self.paths.merged_file, splits_dir=self.paths.splits_dir)
+            return ProcessResult(
+                merged_file=self.paths.merged_file, splits_dir=self.paths.splits_dir
+            )
         self.process_logger.error("多次重试后仍无法完成处理，将跳过本次任务")
         return None
 
@@ -145,7 +151,9 @@ class RecordingProcessor:
         fragment_paths = sorted(self.paths.records_dir.glob("*.flv"))
         ts_files: List[Path] = []
         if not fragment_paths:
-            self.process_logger.error("记录目录 %s 中没有可用的 FLV 片段", self.paths.records_dir)
+            self.process_logger.error(
+                "记录目录 %s 中没有可用的 FLV 片段", self.paths.records_dir
+            )
             return []
         with self.paths.merge_conf_path.open("w", encoding="utf-8") as merge_file:
             for fragment in fragment_paths:
@@ -191,26 +199,36 @@ class RecordingProcessor:
             try:
                 os.remove(fragment)
             except OSError:
-                self.process_logger.debug("删除临时片段失败: %s", fragment, exc_info=True)
+                self.process_logger.debug(
+                    "删除临时片段失败: %s", fragment, exc_info=True
+                )
         try:
             self.paths.records_dir.rmdir()
         except OSError:
-            self.process_logger.debug("删除片段目录失败: %s", self.paths.records_dir, exc_info=True)
+            self.process_logger.debug(
+                "删除片段目录失败: %s", self.paths.records_dir, exc_info=True
+            )
 
     def _cleanup_ts(self, ts_files: List[Path]) -> None:
         for ts_file in ts_files:
             try:
                 ts_file.unlink()
             except OSError:
-                self.process_logger.debug("删除 TS 片段失败: %s", ts_file, exc_info=True)
+                self.process_logger.debug(
+                    "删除 TS 片段失败: %s", ts_file, exc_info=True
+                )
 
     def _run_cmd(self, cmd: List[str]) -> bool:
         """Run FFmpeg command; emit FFmpeg output at warning level by default."""
         if self.ffmpeg_logfile_hander.closed:
             try:
-                self.ffmpeg_logfile_hander = open(self.ffmpeg_logfile_hander.name, mode="a", encoding="utf-8")
+                self.ffmpeg_logfile_hander = open(
+                    self.ffmpeg_logfile_hander.name, mode="a", encoding="utf-8"
+                )
             except Exception:
-                self.process_logger.error("无法打开 FFmpeg 日志文件用于写入", exc_info=True)
+                self.process_logger.error(
+                    "无法打开 FFmpeg 日志文件用于写入", exc_info=True
+                )
                 return False
         # Emit FFmpeg logs at warning level unless caller overrides.
         patched_cmd = cmd
@@ -229,7 +247,9 @@ class RecordingProcessor:
         except subprocess.CalledProcessError:
             self.ffmpeg_logfile_hander.flush()
             self.process_logger.error(
-                "FFmpeg 命令失败: %s，详见 %s", " ".join(patched_cmd), self.ffmpeg_logfile_hander.name
+                "FFmpeg 命令失败: %s，详见 %s",
+                " ".join(patched_cmd),
+                self.ffmpeg_logfile_hander.name,
             )
             return False
 
@@ -263,38 +283,67 @@ class RecordingProcessor:
         target_bps, max_bps, buf_bps = self._estimate_bitrate(temp_file)
         # 默认压字幕使用更省体积的参数，并限制峰值码率，目标体积尽量贴近源（约 1.0~1.2 倍）
         encoder_args = [
-            "-preset", "medium",
-            "-crf", "27",
-            "-b:v", str(target_bps),
-            "-maxrate", str(max_bps),
-            "-bufsize", str(buf_bps),
-            "-pix_fmt", "yuv420p",
+            "-preset",
+            "medium",
+            "-crf",
+            "27",
+            "-b:v",
+            str(target_bps),
+            "-maxrate",
+            str(max_bps),
+            "-bufsize",
+            str(buf_bps),
+            "-pix_fmt",
+            "yuv420p",
         ]
         if getattr(self, "hw_encoder", None):
             if self.hw_encoder == "h264_nvenc":
                 encoder = "h264_nvenc"
                 encoder_args = [
-                    "-preset", "p4",
-                    "-rc:v", "vbr_hq",
-                    "-cq", "29",
-                    "-b:v", str(target_bps),
-                    "-maxrate", str(max_bps),
-                    "-bufsize", str(buf_bps),
-                    "-pix_fmt", "yuv420p",
+                    "-preset",
+                    "p4",
+                    # vbr_hq is deprecated on newer NVENC; use vbr + tune/multipass instead.
+                    "-rc:v",
+                    "vbr",
+                    "-tune",
+                    "hq",
+                    "-multipass",
+                    "fullres",
+                    "-cq",
+                    "29",
+                    "-b:v",
+                    str(target_bps),
+                    "-maxrate",
+                    str(max_bps),
+                    "-bufsize",
+                    str(buf_bps),
+                    "-pix_fmt",
+                    "yuv420p",
                 ]
-                self.process_logger.info("检测到硬件编码器 h264_nvenc，字幕压制将使用硬件加速")
+                self.process_logger.info(
+                    "检测到硬件编码器 h264_nvenc，字幕压制将使用硬件加速"
+                )
             elif self.hw_encoder == "h264_amf":
                 encoder = "h264_amf"
                 encoder_args = [
-                    "-usage", "transcoding",
-                    "-quality", "quality",
-                    "-rc", "vbr",
-                    "-b:v", str(target_bps),
-                    "-maxrate", str(max_bps),
-                    "-bufsize", str(buf_bps),
-                    "-pix_fmt", "yuv420p",
+                    "-usage",
+                    "transcoding",
+                    "-quality",
+                    "quality",
+                    "-rc",
+                    "vbr",
+                    "-b:v",
+                    str(target_bps),
+                    "-maxrate",
+                    str(max_bps),
+                    "-bufsize",
+                    str(buf_bps),
+                    "-pix_fmt",
+                    "yuv420p",
                 ]
-                self.process_logger.info("检测到硬件编码器 h264_amf，字幕压制将使用硬件加速")
+                self.process_logger.info(
+                    "检测到硬件编码器 h264_amf，字幕压制将使用硬件加速"
+                )
         cmd = [
             self.ffmpeg_bin,
             "-y",
@@ -317,7 +366,13 @@ class RecordingProcessor:
             temp_file.unlink(missing_ok=True)
             self.process_logger.info("已将弹幕压制到合并文件中")
         else:
+            # 字幕压制失败，将原文件恢复回去
             self.process_logger.warning("字幕压制失败，回退到无字幕版本")
+            try:
+                if not self.paths.merged_file.exists() and temp_file.exists():
+                    temp_file.rename(self.paths.merged_file)
+            except OSError:
+                self.process_logger.error("恢复无字幕版本失败", exc_info=True)
 
     def _build_transmux_cmd(self, fragment: Path, ts_path: Path) -> list[str]:
         cmd = [
